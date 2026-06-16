@@ -23,14 +23,7 @@ export function useSendOtp() {
     const toast = useToast()
     return useMutation({
         mutationFn: (phone: string) => authApi.sendOtp(phone),
-        onSuccess: (res) => {
-            const devOtp = res.data?.data?.devOtp
-            if (devOtp) {
-                toast.success('OTP ready', `Use code ${devOtp} to continue.`)
-            } else {
-                toast.success('OTP sent', 'Check your phone for the verification code.')
-            }
-        },
+        onSuccess: () => toast.success('OTP sent', 'Check your phone for the verification code.'),
         onError: (e: AxiosError<{ message: string }>) =>
             toast.error('Failed to send OTP', e.response?.data?.message || 'Please try again.'),
     })

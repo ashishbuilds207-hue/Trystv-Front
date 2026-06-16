@@ -20,7 +20,6 @@ export default function LoginPage() {
     const [phone, setPhone] = useState('')
     const [otp, setOtp] = useState(['', '', '', '', '', ''])
     const [googleLoading, setGoogleLoading] = useState(false)
-    const [devOtp, setDevOtp] = useState<string | null>(null)
 
     const sendOtp = useSendOtp()
     const verifyOtp = useVerifyOtp()
@@ -77,8 +76,7 @@ export default function LoginPage() {
         e.preventDefault()
         if (phone.length < 10) return
         try {
-            const { data } = await sendOtp.mutateAsync(`+91${phone}`)
-            if (data?.data?.devOtp) setDevOtp(data.data.devOtp)
+            await sendOtp.mutateAsync(`+91${phone}`)
             setStep('otp')
         } catch {
             // Error toast shown by useSendOtp
@@ -242,32 +240,9 @@ export default function LoginPage() {
                                 <p className="text-ivory-500 text-sm">
                                     Enter the 6-digit code sent to +91 {phone}
                                 </p>
-                                {devOtp ? (
-                                    <div className="mt-3 bg-gold/10 border border-gold/30 rounded-lg px-4 py-3 flex items-center justify-between">
-                                        <div>
-                                            <p className="text-gold-400 text-xs font-medium tracking-wider uppercase mb-1">Dev Mode — Your OTP</p>
-                                            <p className="text-ivory-100 text-2xl font-bold tracking-[0.3em] font-playfair">{devOtp}</p>
-                                        </div>
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                const digits = devOtp.split('')
-                                                setOtp(digits)
-                                                digits.forEach((d, i) => {
-                                                    const el = document.getElementById(`otp-${i}`) as HTMLInputElement
-                                                    if (el) el.value = d
-                                                })
-                                            }}
-                                            className="text-xs text-gold-400 hover:text-gold-300 border border-gold/30 px-2 py-1 rounded-lg transition-colors"
-                                        >
-                                            Auto-fill
-                                        </button>
-                                    </div>
-                                ) : (
-                                    <div className="mt-3 bg-tryst-card border border-tryst-border rounded-lg px-3 py-2 text-ivory-500 text-xs">
-                                        OTP sent. Check your phone — it may take up to a minute.
-                                    </div>
-                                )}
+                                <p className="mt-3 text-ivory-500 text-xs">
+                                    Check your phone for the SMS. It may take up to a minute.
+                                </p>
                             </div>
                             <form onSubmit={handleOtpSubmit} className="space-y-6">
                                 <div className="flex gap-2 justify-between">
