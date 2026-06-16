@@ -2,18 +2,19 @@
 
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { Flame, Bell, Ghost, Sparkles, Orbit, Map, MessageCircle, User } from 'lucide-react'
+import { Flame, Bell, Ghost, Home, Orbit, Map, MessageCircle, User } from 'lucide-react'
 import { useAppStore } from '@/lib/store/useAppStore'
 import { useMatches } from '@/lib/hooks/useDiscover'
 import MatchModal from '@/components/tryst/MatchModal'
 import DisguiseOverlay from '@/components/tryst/DisguiseOverlay'
+import { TonightDisguiseBoot } from '@/components/tryst/TonightDisguiseBoot'
 import AppSidebar, { AppRightRail } from '@/components/tryst/AppSidebar'
 import { useAuthUser } from '@/lib/hooks/useAuth'
 import { useSocket } from '@/lib/hooks/useSocket'
 import { useEffect } from 'react'
 
 const mobileNavItems = [
-    { href: '/tonight', label: 'Tonight', icon: Sparkles },
+    { href: '/tonight', label: 'Tonight', icon: Home },
     { href: '/orbits', label: 'Orbits', icon: Orbit },
     { href: '/pulse', label: 'Pulse', icon: Map },
     { href: '/chat', label: 'Chats', icon: MessageCircle },
@@ -51,6 +52,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <div className={`app-frame min-h-screen ${isNightMode ? 'night-mode' : ''}`}>
             <MatchModal />
             <DisguiseOverlay />
+            <TonightDisguiseBoot />
 
             <div className="app-frame-outer">
                 <div className="app-frame-inner">

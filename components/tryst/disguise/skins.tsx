@@ -74,10 +74,10 @@ export function NewspaperSkin({ alias, onReveal }: SkinProps) {
                     </p>
                 </div>
 
-                <p className="text-[10px] tracking-[0.16em] uppercase text-[#9a3b2e] mb-3">Today&apos;s headlines</p>
+                <p className="text-[10px] tracking-[0.16em] uppercase text-[#9a3b2e] mb-3">Today&apos;s headlines · tap 3× any headline to return</p>
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
                     {headlines.map(h => (
-                        <article key={h.title} className="border-t border-[#1a1815]/30 pt-3">
+                        <article key={h.title} onClick={tap} className="border-t border-[#1a1815]/30 pt-3 cursor-pointer hover:bg-black/[0.03] rounded px-1 -mx-1 transition-colors">
                             <p className="text-[9px] tracking-wider uppercase text-[#9a3b2e] mb-1">{h.section}</p>
                             <p className="font-playfair text-sm sm:text-base font-bold leading-snug mb-2">{h.title}</p>
                             <p className="font-inter text-[10px] text-[#777]">{h.time} · {h.read} read</p>

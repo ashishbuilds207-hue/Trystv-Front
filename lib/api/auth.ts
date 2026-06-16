@@ -1,13 +1,14 @@
 import api from './client'
 
 export const authApi = {
-    sendOtp: (phone: string) => api.post('/auth/send-otp', { phone }),
+    sendOtp: (email: string) => api.post('/auth/send-otp', { email }),
 
-    verifyOtp: (phone: string, otp: string) => api.post('/auth/verify-otp', { phone, otp }),
+    verifyOtp: (email: string, otp: string) => api.post('/auth/verify-otp', { email, otp }),
 
     register: (data: {
-        phone: string; alias: string; age: number; gender: string
+        email: string; alias: string; age: number; gender: string
         relationshipStatus: string; desireTags: string[]; profession?: string; city?: string
+        googleId?: string; avatarUrl?: string
     }) => api.post('/auth/register', data),
 
     googleLogin: (idToken: string) => api.post('/auth/google', { idToken }),
@@ -77,4 +78,8 @@ export const engagementApi = {
     getMoments: () => api.get('/engagement/moments'),
     createMoment: (content: string) => api.post('/engagement/moments', { content }),
     getWeeklyPick: () => api.get('/engagement/weekly-pick'),
+    postDailyMedia: (mediaType: string, content?: string) => api.post('/engagement/daily-media', { mediaType, content }),
+    unlockVisitors: () => api.post('/engagement/unlock-visitors'),
+    likePrompt: (id: string) => api.post(`/engagement/prompts/${id}/like`),
+    commentPrompt: (id: string, content: string) => api.post(`/engagement/prompts/${id}/comment`, { content }),
 }

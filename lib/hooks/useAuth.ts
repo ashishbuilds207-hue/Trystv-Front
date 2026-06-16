@@ -2,10 +2,12 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { authApi } from '@/lib/api/auth'
+import type { OtpDeliveryMode } from '@/components/auth/OtpSentBanner'
 import { useAppStore } from '@/lib/store/useAppStore'
 import { useToast } from './useToast'
 import { useRouter } from 'next/navigation'
 import { AxiosError } from 'axios'
+import { formatOtpSendError, getApiErrorMessage } from '@/lib/api/errors'
 
 export function useAuthUser() {
     return useQuery({
@@ -22,17 +24,26 @@ export function useAuthUser() {
 export function useSendOtp() {
     const toast = useToast()
     return useMutation({
-        mutationFn: (phone: string) => authApi.sendOtp(phone),
-        onSuccess: () => toast.success('OTP sent', 'Check your phone for the verification code.'),
-        onError: (e: AxiosError<{ message: string }>) =>
-            toast.error('Failed to send OTP', e.response?.data?.message || 'Please try again.'),
+        mutationFn: (email: string) => authApi.sendOtp(email),
+        onSuccess: (response) => {
+            const mode = (response.data?.data?.otpMode as OtpDeliveryMode | undefined) || 'email'
+            if (mode === 'console') {
+                toast.success('OTP ready', 'Check the BACKTRY terminal for your 6-digit code.')
+            } else {
+                toast.success('OTP sent', 'Check your email inbox (and spam folder).')
+            }
+        },
+        onError: (e: AxiosError<{ message: string }>) => {
+            const msg = formatOtpSendError(getApiErrorMessage(e, 'Could not send OTP. Please try again.'))
+            toast.error('Failed to send OTP', msg)
+        },
     })
 }
 
 export function useVerifyOtp() {
     const toast = useToast()
     return useMutation({
-        mutationFn: ({ phone, otp }: { phone: string; otp: string }) => authApi.verifyOtp(phone, otp),
+        mutationFn: ({ email, otp }: { email: string; otp: string }) => authApi.verifyOtp(email, otp),
         onError: (e: AxiosError<{ message: string }>) => {
             const status = e.response?.status
             const msg = e.response?.data?.message

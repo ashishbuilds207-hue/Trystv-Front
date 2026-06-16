@@ -159,9 +159,15 @@ export interface EngagementHome {
     alias: string
     avatarUrl: string
     city: string
+    points: number
+    greeting: string
     streak: number
     streakLastDate: string | null
     chemistry: { score: number; alias: string; avatarUrl: string; partnerId: string } | null
+    allChemistry: { score: number; alias: string; avatarUrl: string; partnerId: string }[]
+    profileVisitors: { count: number; unlockCost: number; unlocked: boolean }
+    anonymousPrompts: { id: string; type: string; preview: string; likeCount: number; replyCount: number; liked: boolean }[]
+    dailyMediaTasks: { type: string; label: string; points: number; done: boolean }[]
     moments: { id: string; content: string; city: string; createdAt: string; alias: string; avatarUrl: string }[]
     weeklyPick: {
         id: string; alias: string; avatarUrl: string; age: number; bio: string
@@ -171,6 +177,9 @@ export interface EngagementHome {
     archetype: string
     isGold: boolean
     diaryPrompt: string
+    disguiseModeEnabled?: boolean
+    activeDisguiseSkin?: string
+    isGhostMode?: boolean
 }
 
 export interface PulseCity {

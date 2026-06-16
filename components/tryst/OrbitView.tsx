@@ -1,11 +1,12 @@
 'use client'
 
 import { useRef, useState, useCallback } from 'react'
-import { Flame, Heart, Filter, Loader2 } from 'lucide-react'
+import { Flame, Heart, Filter, Loader2, X, SlidersHorizontal } from 'lucide-react'
 import Link from 'next/link'
 import { useOrbitFeed, useOrbitPull, useOrbitIgnite, type OrbitProfile } from '@/lib/hooks/useFeatures'
 import { useAuthUser } from '@/lib/hooks/useAuth'
 import { useAppStore } from '@/lib/store/useAppStore'
+import { userApi } from '@/lib/api/auth'
 import ProfileAvatar from './ProfileAvatar'
 
 const ARCHETYPES: Record<string, string> = {
@@ -45,7 +46,11 @@ function OrbitNode({ profile, size, onPull, onIgnite, onTap, pulled, fx }: {
             <div className={`w-full h-full rounded-full overflow-hidden border-2 ${profile.isVerified ? 'border-gold/70' : 'border-tryst-card'}`}>
                 <ProfileAvatar seed={profile.alias} src={profile.avatarUrl || profile.photoUrls?.[0]} size={size} />
             </div>
-            {profile.isOnline && <div className="absolute top-1 right-0 w-2.5 h-2.5 bg-success rounded-full border-2 border-tryst-bg" />}
+            {profile.isOnline !== false ? (
+                <div className="absolute top-0.5 right-0 w-3 h-3 bg-emerald-500 rounded-full border-2 border-tryst-bg" title="Online" />
+            ) : (
+                <div className="absolute top-0.5 right-0 w-3 h-3 bg-red-500/80 rounded-full border-2 border-tryst-bg" title="Offline" />
+            )}
             <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 font-playfair text-[10px] text-ivory-500 whitespace-nowrap">{profile.alias}</div>
             {fx === 'pull' && <div className="absolute -inset-2 rounded-full border-2 border-crimson animate-pulse-ring" />}
             {fx === 'ignite' && <Flame className="absolute inset-0 m-auto w-6 h-6 text-gold animate-flame-up" />}
@@ -99,6 +104,10 @@ export default function OrbitView() {
     const [fx, setFx] = useState<{ pid: string; type: 'pull' | 'ignite' } | null>(null)
     const [toast, setToast] = useState<string | null>(null)
     const [selected, setSelected] = useState<OrbitProfile | null>(null)
+    const [showFilters, setShowFilters] = useState(false)
+    const [rotation, setRotation] = useState(0)
+    const dragRef = useRef<{ active: boolean; startX: number; startRot: number }>({ active: false, startX: 0, startRot: 0 })
+    const [prefs, setPrefs] = useState({ seeking: 'Everyone', ageMin: 18, ageMax: 60, distance: 50 })
 
     const isGold = me?.isGold
     const ring1 = profiles.filter(p => p.ring === 1).slice(0, 3)
@@ -150,11 +159,14 @@ export default function OrbitView() {
                     <h2 className="font-playfair text-xl text-ivory-100">Tonight in {me?.city || 'your city'}</h2>
                 </div>
                 <div className="flex gap-2">
+                    <button onClick={() => setShowFilters(true)} className="w-9 h-9 rounded-full border border-tryst-border flex items-center justify-center text-ivory-400 hover:text-ivory-200">
+                        <SlidersHorizontal className="w-4 h-4" />
+                    </button>
                     <div className="flex items-center gap-1.5 bg-tryst-card border border-tryst-border rounded-full px-3 py-1.5 text-xs text-ivory-400">
-                        <Heart className="w-3 h-3" /> {isGold ? '∞' : '3'}
+                        <Heart className="w-3 h-3 text-crimson-300" /> {isGold ? '∞' : '15/day'}
                     </div>
                     <div className="flex items-center gap-1.5 bg-gold/10 border border-gold/30 rounded-full px-3 py-1.5 text-xs text-gold-400">
-                        <Flame className="w-3 h-3" /> {isGold ? '∞' : '1'}
+                        <Flame className="w-3 h-3" /> {isGold ? '∞' : 'Ignites'}
                     </div>
                 </div>
             </div>
@@ -162,15 +174,31 @@ export default function OrbitView() {
             <div className="flex items-center gap-2 text-xs text-ivory-500 mb-4">
                 <Filter className="w-3 h-3" />
                 <span>
-                    {me?.seeking || 'Everyone'} · {me?.agePrefMin || 18}–{me?.agePrefMax || 50} · {(me?.maxDistanceKm || 50) >= 100 ? 'worldwide' : `${me?.maxDistanceKm || 50} km`}
+                    {me?.seeking || prefs.seeking} · {me?.agePrefMin || prefs.ageMin}–{me?.agePrefMax || prefs.ageMax} · {(me?.maxDistanceKm || prefs.distance) >= 100 ? 'worldwide' : `${me?.maxDistanceKm || prefs.distance} km`}
                 </span>
             </div>
 
-            <div className="relative h-[420px] mx-auto" onPointerDown={() => setFrozen(true)} onPointerUp={() => setTimeout(() => setFrozen(false), 350)}>
-                <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 rounded-full bg-tryst-card border border-crimson/30 flex items-center justify-center z-10">
+            <p className="text-ivory-600 text-xs mb-2 text-center">Drag to spin the orbit · tap profile to inspect · hold to pull · double-tap to ignite</p>
+
+            <div
+                className="relative h-[420px] mx-auto touch-none select-none"
+                style={{ perspective: '800px' }}
+                onPointerDown={(e) => {
+                    setFrozen(true)
+                    dragRef.current = { active: true, startX: e.clientX, startRot: rotation }
+                }}
+                onPointerMove={(e) => {
+                    if (!dragRef.current.active) return
+                    const delta = e.clientX - dragRef.current.startX
+                    setRotation(dragRef.current.startRot + delta * 0.4)
+                }}
+                onPointerUp={() => { dragRef.current.active = false; setTimeout(() => setFrozen(false), 350) }}
+                onPointerLeave={() => { dragRef.current.active = false }}
+            >
+                <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 rounded-full bg-tryst-card border border-crimson/30 flex items-center justify-center z-10 shadow-[0_0_30px_rgba(192,57,43,0.2)]">
                     <ProfileAvatar seed={me?.alias || 'You'} src={me?.avatarUrl} size={56} />
                 </div>
-                <div style={{ animationPlayState: frozen ? 'paused' : 'running' }}>
+                <div style={{ transform: `rotateY(${rotation}deg)`, transformStyle: 'preserve-3d', animationPlayState: frozen ? 'paused' : 'running' }}>
                     <OrbitRing items={ring1} radius={100} duration={baseDur[0]} size={52} pulled={pulled} fx={fx}
                         onPull={doPull} onIgnite={doIgnite} onTap={setSelected} />
                     <OrbitRing items={ring2} radius={155} duration={baseDur[1]} reverse size={44} pulled={pulled} fx={fx}
@@ -196,26 +224,72 @@ export default function OrbitView() {
             )}
 
             {selected && (
-                <div className="fixed inset-0 bg-black/70 z-50 flex items-end sm:items-center justify-center p-4" onClick={() => setSelected(null)}>
-                    <div className="bg-tryst-card border border-tryst-border rounded-2xl p-6 max-w-sm w-full" onClick={e => e.stopPropagation()}>
+                <div className="fixed inset-y-0 right-0 w-full max-w-sm bg-tryst-card border-l border-tryst-border z-50 flex flex-col shadow-2xl animate-in slide-in-from-right duration-200">
+                    <div className="flex items-center justify-between p-4 border-b border-tryst-border">
+                        <h3 className="font-playfair text-lg text-ivory-100">Profile</h3>
+                        <button onClick={() => setSelected(null)} className="w-8 h-8 rounded-full border border-tryst-border flex items-center justify-center text-ivory-400">
+                            <X className="w-4 h-4" />
+                        </button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-6">
                         <div className="flex gap-4 mb-4">
-                            <ProfileAvatar seed={selected.alias} src={selected.avatarUrl} size={72} />
+                            <ProfileAvatar seed={selected.alias} src={selected.avatarUrl} size={80} />
                             <div>
-                                <h3 className="font-playfair text-xl text-ivory-100">{selected.alias}, {selected.age}</h3>
+                                <h3 className="font-playfair text-xl font-bold text-ivory-100">{selected.alias}, {selected.age}</h3>
                                 <p className="text-ivory-500 text-sm">{selected.city} · {ARCHETYPES[selected.desireArchetype] || selected.desireArchetype}</p>
+                                <div className="flex items-center gap-1.5 mt-1">
+                                    <span className={`w-2 h-2 rounded-full ${selected.isOnline !== false ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                                    <span className="text-xs text-ivory-500">{selected.isOnline !== false ? 'Online now' : 'Offline'}</span>
+                                </div>
                                 <p className="text-crimson-300 text-sm mt-1">{selected.matchScore}% DesireIQ</p>
                             </div>
                         </div>
                         <p className="text-ivory-400 text-sm mb-4">{selected.bio || 'No bio yet.'}</p>
+                        <div className="flex flex-wrap gap-2 mb-6">
+                            {(selected.desireTags || []).map(t => (
+                                <span key={t} className="px-2 py-1 rounded-full border border-tryst-border text-xs text-ivory-400">{t}</span>
+                            ))}
+                        </div>
                         <div className="flex gap-2">
-                            <button onClick={() => { doPull(selected); setSelected(null) }}
+                            <button onClick={() => doPull(selected)}
                                 className="flex-1 py-2.5 border border-crimson/40 text-crimson-300 rounded-xl text-sm">Pull</button>
-                            <button onClick={() => { doIgnite(selected); setSelected(null) }}
+                            <button onClick={() => doIgnite(selected)}
                                 className="flex-1 py-2.5 bg-gold-gradient text-black font-semibold rounded-xl text-sm">Ignite</button>
                         </div>
                         {!isGold && (
                             <Link href="/gold" className="block text-center text-gold-400 text-xs mt-3 hover:underline">Upgrade for unlimited sparks</Link>
                         )}
+                    </div>
+                </div>
+            )}
+
+            {showFilters && (
+                <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-4" onClick={() => setShowFilters(false)}>
+                    <div className="bg-tryst-card border border-tryst-border rounded-2xl p-6 max-w-md w-full" onClick={e => e.stopPropagation()}>
+                        <h3 className="font-playfair text-xl text-ivory-100 mb-4">Orbit filters</h3>
+                        <label className="text-xs text-ivory-500 uppercase tracking-wider mb-2 block">Looking for</label>
+                        <div className="grid grid-cols-3 gap-2 mb-4">
+                            {['Women', 'Men', 'Everyone'].map(s => (
+                                <button key={s} onClick={() => setPrefs(p => ({ ...p, seeking: s }))}
+                                    className={`py-2 rounded-lg border text-sm ${prefs.seeking === s ? 'border-crimson bg-crimson/10 text-crimson-300' : 'border-tryst-border text-ivory-400'}`}>{s}</button>
+                            ))}
+                        </div>
+                        <label className="text-xs text-ivory-500 uppercase tracking-wider mb-2 block">Age {prefs.ageMin}–{prefs.ageMax}</label>
+                        <div className="flex gap-3 mb-4">
+                            <input type="range" min={18} max={60} value={prefs.ageMin} onChange={e => setPrefs(p => ({ ...p, ageMin: +e.target.value }))} className="flex-1" />
+                            <input type="range" min={18} max={60} value={prefs.ageMax} onChange={e => setPrefs(p => ({ ...p, ageMax: +e.target.value }))} className="flex-1" />
+                        </div>
+                        <label className="text-xs text-ivory-500 uppercase tracking-wider mb-2 block">Distance {prefs.distance} km</label>
+                        <input type="range" min={5} max={200} value={prefs.distance} onChange={e => setPrefs(p => ({ ...p, distance: +e.target.value }))} className="w-full mb-6" />
+                        <button onClick={async () => {
+                            await userApi.updateProfile({
+                                seeking: prefs.seeking,
+                                agePrefMin: prefs.ageMin,
+                                agePrefMax: prefs.ageMax,
+                                maxDistanceKm: prefs.distance,
+                            })
+                            setShowFilters(false)
+                        }} className="w-full py-3 bg-crimson-gradient text-white rounded-xl font-medium">Apply filters</button>
                     </div>
                 </div>
             )}

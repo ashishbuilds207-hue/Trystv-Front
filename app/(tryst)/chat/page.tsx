@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo, Suspense } from 'react'
 import Image from 'next/image'
-import { Send, Timer, Lock, Mic, ArrowLeft, MoreVertical, CheckCircle2, MapPin, AlertTriangle, Flame, Loader2, Phone, PhoneOff } from 'lucide-react'
+import { Send, Timer, Lock, Mic, ArrowLeft, MoreVertical, Check, CheckCheck, CheckCircle2, MapPin, AlertTriangle, Flame, Loader2, Phone, PhoneOff, Smile } from 'lucide-react'
 import { useMatches, useMessages, useSendMessage, type Message } from '@/lib/hooks/useDiscover'
 import { useCallConsent, useSetCallConsent } from '@/lib/hooks/useFeatures'
 import { getSocket } from '@/lib/hooks/useSocket'
@@ -39,7 +39,9 @@ function ChatPageContent() {
     const [activeMatchId, setActiveMatchId] = useState<string | null>(searchParams.get('match'))
     const [inputText, setInputText] = useState('')
     const [isTyping, setIsTyping] = useState(false)
+    const [showEmoji, setShowEmoji] = useState(false)
     const [showDeleteMenu, setShowDeleteMenu] = useState(false)
+    const EMOJIS = ['😊', '🔥', '❤️', '😉', '🌹', '✨', '😂', '🥂', '💋', '🌙']
     const messagesEndRef = useRef<HTMLDivElement>(null)
     const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -266,6 +268,13 @@ function ChatPageContent() {
                                             </div>
                                             <div className={`flex items-center gap-1 text-ivory-600 text-xs ${isSent ? 'flex-row-reverse' : ''}`}>
                                                 <span>{msgTime(msg.createdAt)}</span>
+                                                {isSent && (
+                                                    msg.isRead ? (
+                                                        <CheckCheck className="w-3.5 h-3.5 text-blue-400" aria-label="Read" />
+                                                    ) : (
+                                                        <Check className="w-3.5 h-3.5 text-ivory-600" aria-label="Delivered" />
+                                                    )
+                                                )}
                                                 {msg.expiresAt && (
                                                     <div className="flex items-center gap-0.5 text-gold-600">
                                                         <Timer className="w-2.5 h-2.5" />
@@ -294,7 +303,17 @@ function ChatPageContent() {
 
                         {/* Input */}
                         <div className="p-4 border-t border-tryst-border bg-tryst-bg-2">
+                            {showEmoji && (
+                                <div className="flex flex-wrap gap-2 mb-3 p-2 bg-tryst-card rounded-xl border border-tryst-border">
+                                    {EMOJIS.map(e => (
+                                        <button key={e} onClick={() => setInputText(t => t + e)} className="text-xl hover:scale-110 transition-transform">{e}</button>
+                                    ))}
+                                </div>
+                            )}
                             <div className="flex items-center gap-3">
+                                <button onClick={() => setShowEmoji(p => !p)} className="w-9 h-9 rounded-full bg-tryst-card border border-tryst-border flex items-center justify-center text-ivory-400 hover:text-ivory-200 flex-shrink-0">
+                                    <Smile className="w-4 h-4" />
+                                </button>
                                 <div className="flex-1 relative">
                                     <input type="text" value={inputText}
                                         onChange={(e) => handleInputChange(e.target.value)}

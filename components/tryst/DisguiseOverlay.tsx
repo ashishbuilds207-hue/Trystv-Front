@@ -8,6 +8,7 @@ import { SKIN_COMPONENTS, type DisguiseSkinId } from './disguise/skins'
 import DisguiseSkinDock from './disguise/DisguiseSkinDock'
 import DisguiseActiveCoach from './disguise/DisguiseActiveCoach'
 import { scrollAppToTop, scrollDisguiseContentToTop } from '@/lib/scroll'
+import { markTonightRevealed } from '@/components/tryst/TonightDisguiseBoot'
 
 export default function DisguiseOverlay() {
     const { disguiseModeEnabled, activeDisguiseSkin, setDisguise } = useAppStore()
@@ -15,6 +16,7 @@ export default function DisguiseOverlay() {
     const viewportRef = useRef<HTMLDivElement>(null)
 
     const exitDisguise = useCallback(async () => {
+        markTonightRevealed()
         setDisguise(false)
         try {
             await userApi.updateProfile({ disguiseModeEnabled: false })

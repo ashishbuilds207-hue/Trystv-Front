@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { Flame, Orbit, Map, MessageCircle, User, Ghost, Shield, LogOut, Sparkles, Crown, ChevronRight } from 'lucide-react'
+import { Flame, Orbit, Map, MessageCircle, User, Ghost, Shield, LogOut, Home, Crown, ChevronRight } from 'lucide-react'
 import { usePathname } from 'next/navigation'
 import { useAppStore } from '@/lib/store/useAppStore'
 import { useSignOut } from '@/lib/hooks/useAuth'
@@ -9,7 +9,7 @@ import { useAuthUser } from '@/lib/hooks/useAuth'
 import ProfileAvatar from '@/components/tryst/ProfileAvatar'
 
 const navItems = [
-    { href: '/tonight', icon: Sparkles, label: 'Tonight' },
+    { href: '/tonight', icon: Home, label: 'Tonight' },
     { href: '/orbits', icon: Orbit, label: 'Orbits' },
     { href: '/pulse', icon: Map, label: 'Pulse' },
     { href: '/chat', icon: MessageCircle, label: 'Chats' },

@@ -5,7 +5,14 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ChevronRight, Check, ArrowRight, User, Heart, Lock } from 'lucide-react'
 import { TrystLogo } from '@/components/tryst/TrystLogo'
+import { EmailField, isValidEmail } from '@/components/auth/EmailField'
+import { GoogleSignInButton, AuthDivider } from '@/components/auth/GoogleSignInButton'
+import { useGoogleAuthFlow, type GoogleUserData } from '@/lib/hooks/useGoogleAuthFlow'
 import { useRegister, useSendOtp, useVerifyOtp } from '@/lib/hooks/useAuth'
+import { formatOtpSendError, getApiErrorMessage } from '@/lib/api/errors'
+import { OtpErrorBanner } from '@/components/auth/OtpErrorBanner'
+import { OtpDeliveryBanner } from '@/components/auth/OtpSentBanner'
+import type { OtpDeliveryMode } from '@/components/auth/OtpSentBanner'
 
 type RelationshipStatus = 'married' | 'partnered' | 'open-relationship' | 'discreet-single'
 type DesireTag = 'Emotional Connection' | 'Adventure' | 'Conversation' | 'Physical' | 'Romance' | 'Travel' | 'Passion' | 'Discretion'
@@ -21,19 +28,23 @@ const relationshipOptions: { value: RelationshipStatus; label: string; desc: str
 
 export default function RegisterPage() {
     const router = useRouter()
+    const { googleLogin, loading: googleLoading } = useGoogleAuthFlow()
 
     const registerMutation = useRegister()
     const sendOtp = useSendOtp()
     const verifyOtp = useVerifyOtp()
     const [step, setStep] = useState(1)
-    const [otpStep, setOtpStep] = useState<'phone' | 'otp'>('phone')
+    const [otpStep, setOtpStep] = useState<'email' | 'otp'>('email')
     const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', ''])
+    const [otpSendError, setOtpSendError] = useState('')
+    const [otpDelivery, setOtpDelivery] = useState<OtpDeliveryMode>('email')
+    const [googleSignup, setGoogleSignup] = useState<GoogleUserData | null>(null)
     const autoSendDone = useRef(false)
 
     const [form, setForm] = useState({
         alias: '',
         age: '',
-        phone: '',
+        email: '',
         gender: '' as 'female' | 'male' | '',
         relationshipStatus: '' as RelationshipStatus | '',
         desireTags: [] as DesireTag[],
@@ -41,13 +52,26 @@ export default function RegisterPage() {
         city: '',
     })
 
-    // Pre-fill phone if coming from OTP login
+    // Pre-fill email from OTP login or Google signup redirect
     useEffect(() => {
-        const phone = sessionStorage.getItem('tryst_phone')
-        if (phone) {
-            const digits = phone.replace('+91', '')
-            setForm((p) => ({ ...p, phone: digits }))
+        const params = new URLSearchParams(window.location.search)
+        if (params.get('source') === 'google') {
+            const raw = sessionStorage.getItem('tryst_google_data')
+            if (raw) {
+                try {
+                    const data = JSON.parse(raw) as GoogleUserData
+                    setGoogleSignup(data)
+                    setForm((p) => ({
+                        ...p,
+                        email: data.email,
+                        alias: p.alias || data.name?.split(' ')[0] || '',
+                    }))
+                } catch { /* ignore */ }
+            }
+            return
         }
+        const saved = sessionStorage.getItem('tryst_email')
+        if (saved) setForm((p) => ({ ...p, email: saved }))
     }, [])
 
     const updateForm = (key: keyof typeof form, value: unknown) => setForm((p) => ({ ...p, [key]: value }))
@@ -61,40 +85,45 @@ export default function RegisterPage() {
         if (step === 1) return form.alias.length >= 2 && form.age && Number(form.age) >= 18
         if (step === 2) return form.gender !== '' && form.relationshipStatus !== ''
         if (step === 3) return form.desireTags.length >= 1
-        if (step === 4) return otpStep === 'otp' && otpDigits.join('').length === 6
+        if (step === 4) return googleSignup ? true : otpStep === 'otp' && otpDigits.join('').length === 6
         return false
     }
 
+    const registerEmail = (googleSignup?.email || form.email).trim().toLowerCase()
+
     const handleSendOtp = async () => {
-        if (form.phone.length < 10) return
+        if (!isValidEmail(form.email)) return
+        setOtpSendError('')
         try {
-            await sendOtp.mutateAsync(`+91${form.phone}`)
+            const res = await sendOtp.mutateAsync(registerEmail)
+            setOtpDelivery((res.data?.data?.otpMode as OtpDeliveryMode) || 'email')
             setOtpStep('otp')
             setOtpDigits(['', '', '', '', '', ''])
-        } catch {
-            setOtpStep('phone')
+        } catch (err) {
+            setOtpStep('email')
+            setOtpSendError(formatOtpSendError(getApiErrorMessage(err, 'Could not send OTP. Please try again.')))
         }
     }
 
-    const handlePhoneChange = (value: string) => {
-        const digits = value.replace(/\D/g, '')
-        updateForm('phone', digits)
+    const handleEmailChange = (value: string) => {
+        updateForm('email', value)
+        setOtpSendError('')
         if (otpStep === 'otp') {
-            setOtpStep('phone')
+            setOtpStep('email')
             setOtpDigits(['', '', '', '', '', ''])
             autoSendDone.current = false
         }
     }
 
-    // Auto-send when arriving at step 4 with phone from login redirect
+    // Auto-send when arriving at step 4 with email from login redirect
     useEffect(() => {
-        if (step !== 4 || otpStep !== 'phone' || form.phone.length !== 10 || autoSendDone.current) return
-        const fromLogin = sessionStorage.getItem('tryst_phone')
+        if (step !== 4 || otpStep !== 'email' || !isValidEmail(form.email) || autoSendDone.current) return
+        const fromLogin = sessionStorage.getItem('tryst_email')
         if (!fromLogin) return
         autoSendDone.current = true
         handleSendOtp()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [step, form.phone, otpStep])
+    }, [step, form.email, otpStep])
 
     const handleOtpChange = (i: number, v: string) => {
         if (v.length > 1) return
@@ -104,11 +133,8 @@ export default function RegisterPage() {
 
     const handleSubmit = async () => {
         try {
-            const { data } = await verifyOtp.mutateAsync({ phone: `+91${form.phone}`, otp: otpDigits.join('') })
-            if (!data.data) return
-
-            await registerMutation.mutateAsync({
-                phone: `+91${form.phone}`,
+            const payload = {
+                email: registerEmail,
                 alias: form.alias,
                 age: Number(form.age),
                 gender: form.gender as string,
@@ -116,8 +142,19 @@ export default function RegisterPage() {
                 desireTags: form.desireTags,
                 profession: form.profession,
                 city: form.city,
-            })
-            sessionStorage.removeItem('tryst_phone')
+                ...(googleSignup ? { googleId: googleSignup.googleId, avatarUrl: googleSignup.avatar } : {}),
+            }
+
+            if (googleSignup) {
+                await registerMutation.mutateAsync(payload)
+            } else {
+                const { data } = await verifyOtp.mutateAsync({ email: registerEmail, otp: otpDigits.join('') })
+                if (!data.data) return
+                await registerMutation.mutateAsync(payload)
+            }
+
+            sessionStorage.removeItem('tryst_email')
+            sessionStorage.removeItem('tryst_google_data')
             router.push('/onboarding')
         } catch {
             // toasts from hooks
@@ -163,6 +200,33 @@ export default function RegisterPage() {
                             <h2 className="font-playfair text-2xl font-bold text-ivory-100 mb-1">Create your alias.</h2>
                             <p className="text-ivory-500 text-sm">Your real name is never shown. Choose a name that feels like you.</p>
                         </div>
+
+                        {!googleSignup && (
+                            <div className="space-y-3">
+                                <GoogleSignInButton
+                                    onClick={googleLogin}
+                                    loading={googleLoading}
+                                    label="Sign up with Google"
+                                />
+                                <AuthDivider label="or continue with email" />
+                            </div>
+                        )}
+
+                        {googleSignup && (
+                            <div className="flex items-center gap-3 p-3 bg-tryst-bg border border-tryst-border rounded-xl">
+                                {googleSignup.avatar ? (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img src={googleSignup.avatar} alt="" className="w-10 h-10 rounded-full" />
+                                ) : (
+                                    <div className="w-10 h-10 rounded-full bg-tryst-border" />
+                                )}
+                                <div className="min-w-0">
+                                    <p className="text-ivory-200 text-sm font-medium truncate">{googleSignup.name || 'Google account'}</p>
+                                    <p className="text-ivory-500 text-xs truncate">{googleSignup.email}</p>
+                                </div>
+                                <span className="ml-auto text-xs text-emerald-400 shrink-0">Verified</span>
+                            </div>
+                        )}
                         <div>
                             <label className="text-ivory-400 text-xs font-medium tracking-wider uppercase mb-2 block">Your Alias</label>
                             <div className="relative">
@@ -258,44 +322,48 @@ export default function RegisterPage() {
                     <div className="space-y-6">
                         <div>
                             <h2 className="font-playfair text-2xl font-bold text-ivory-100 mb-1">One last step.</h2>
-                            <p className="text-ivory-500 text-sm">Verify with your phone number. No social login — your identity stays private.</p>
+                            <p className="text-ivory-500 text-sm">
+                                {googleSignup
+                                    ? 'Your Google account is verified. Review and begin your story.'
+                                    : 'Verify with your email. We\'ll send a private code — your address stays hidden on TRYST.'}
+                            </p>
                         </div>
 
-                        {otpStep === 'phone' ? (
-                            <div className="space-y-4">
+                        {googleSignup ? (
+                            <div className="flex items-center gap-3 p-4 bg-emerald-500/5 border border-emerald-500/20 rounded-xl">
+                                {googleSignup.avatar ? (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img src={googleSignup.avatar} alt="" className="w-12 h-12 rounded-full" />
+                                ) : (
+                                    <div className="w-12 h-12 rounded-full bg-tryst-border" />
+                                )}
                                 <div>
-                                    <label className="text-ivory-400 text-xs font-medium tracking-wider uppercase mb-2 block">Phone Number</label>
-                                    <div className="flex gap-2">
-                                        <div className="flex items-center gap-2 px-3 bg-tryst-card border border-tryst-border rounded-xl min-w-[72px] justify-center">
-                                            <span className="text-base leading-none">🇮🇳</span>
-                                            <span className="text-ivory-300 text-sm font-medium">+91</span>
-                                        </div>
-                                        <div className="relative flex-1">
-                                            <input type="tel" value={form.phone}
-                                                onChange={(e) => handlePhoneChange(e.target.value)}
-                                                placeholder="98765 43210"
-                                                className="tryst-input tracking-widest pr-10"
-                                                maxLength={10} />
-                                            {form.phone.length === 10 && (
-                                                <div className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-success/20 flex items-center justify-center">
-                                                    <svg className="w-3 h-3 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                                                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                                                    </svg>
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
+                                    <p className="text-ivory-200 text-sm font-medium">Signed in with Google</p>
+                                    <p className="text-ivory-500 text-xs">{googleSignup.email}</p>
                                 </div>
-                                <button onClick={handleSendOtp} disabled={form.phone.length < 10 || sendOtp.isPending}
+                            </div>
+                        ) : otpStep === 'email' ? (
+                            <div className="space-y-4">
+                                <EmailField
+                                    value={form.email}
+                                    onChange={handleEmailChange}
+                                    id="register-email"
+                                    hint="Never shown on your profile"
+                                />
+                                {otpSendError && (
+                                    <OtpErrorBanner message={otpSendError} onDismiss={() => setOtpSendError('')} />
+                                )}
+                                <button onClick={handleSendOtp} disabled={!isValidEmail(form.email) || sendOtp.isPending}
                                     className="tryst-button-primary w-full flex items-center justify-center gap-2 disabled:opacity-50">
-                                    {sendOtp.isPending ? <div className="loading-spinner" /> : <>Send OTP <ArrowRight className="w-4 h-4" /></>}
+                                    {sendOtp.isPending ? <div className="loading-spinner" /> : <>Send code to email <ArrowRight className="w-4 h-4" /></>}
                                 </button>
                             </div>
                         ) : (
                             <div className="space-y-4">
                                 <p className="text-ivory-400 text-sm">
-                                    Enter the 6-digit code sent to +91 {form.phone}
+                                    Enter the 6-digit code we sent to your email.
                                 </p>
+                                <OtpDeliveryBanner email={registerEmail} mode={otpDelivery} />
                                 <div className="flex gap-2 justify-between">
                                     {otpDigits.map((d, i) => (
                                         <input key={i} id={`rotp-${i}`} type="text" inputMode="numeric" value={d}
@@ -306,9 +374,12 @@ export default function RegisterPage() {
                                         />
                                     ))}
                                 </div>
-                                <button onClick={() => { setOtpStep('phone'); setOtpDigits(['','','','','','']); autoSendDone.current = false }}
+                                {otpSendError && (
+                                    <OtpErrorBanner message={otpSendError} onDismiss={() => setOtpSendError('')} />
+                                )}
+                                <button onClick={() => { setOtpStep('email'); setOtpDigits(['','','','','','']); autoSendDone.current = false; setOtpSendError('') }}
                                     className="text-ivory-500 text-xs hover:text-ivory-300 transition-colors">
-                                    ← Change number
+                                    ← Change email
                                 </button>
                                 <button
                                     type="button"
@@ -347,7 +418,7 @@ export default function RegisterPage() {
                             Back
                         </button>
                     )}
-                    {(step < 4 || (step === 4 && otpStep === 'otp')) && (
+                    {(step < 4 || (step === 4 && (googleSignup || otpStep === 'otp'))) && (
                         <button onClick={handleNext} disabled={!canProceed() || loading}
                             className="flex-1 tryst-button-primary flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
                             {loading ? <div className="loading-spinner" /> : step < 4 ? <>Continue <ChevronRight className="w-4 h-4" /></> : <>Begin My Story <ArrowRight className="w-4 h-4" /></>}
