@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, Suspense } from 'react'
 import Image from 'next/image'
 import { Send, Timer, Lock, Mic, ArrowLeft, MoreVertical, CheckCircle2, MapPin, AlertTriangle, Flame, Loader2, Phone, PhoneOff } from 'lucide-react'
 import { useMatches, useMessages, useSendMessage, type Message } from '@/lib/hooks/useDiscover'
@@ -17,6 +17,20 @@ function msgTime(d: string) {
 }
 
 export default function ChatPage() {
+    return (
+        <Suspense
+            fallback={
+                <div className="flex items-center justify-center h-[calc(100vh-80px)]">
+                    <Loader2 className="w-7 h-7 text-crimson animate-spin" />
+                </div>
+            }
+        >
+            <ChatPageContent />
+        </Suspense>
+    )
+}
+
+function ChatPageContent() {
     const searchParams = useSearchParams()
     const router = useRouter()
     const qc = useQueryClient()
