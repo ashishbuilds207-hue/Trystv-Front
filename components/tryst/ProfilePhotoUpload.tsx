@@ -8,7 +8,9 @@ import { useToast } from '@/lib/hooks/useToast'
 import { useQueryClient } from '@tanstack/react-query'
 
 const MAX_PHOTOS = 6
-const API_BASE = process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:5000'
+import { publicConfig } from '@/lib/config'
+
+const API_BASE = publicConfig.apiOrigin
 
 interface Props {
     photos: string[]

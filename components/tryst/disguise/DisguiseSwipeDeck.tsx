@@ -10,7 +10,9 @@ import { useTripleTap } from '@/lib/hooks/useTripleTap'
 import { DISGUISE_THEMES } from './themes'
 import type { DisguiseSkinId } from './skins'
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:5000'
+import { publicConfig } from '@/lib/config'
+
+const API_BASE = publicConfig.apiOrigin
 const SWIPE_THRESHOLD = 90
 
 function photoUrl(p: DiscoverProfile) {

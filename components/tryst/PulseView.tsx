@@ -9,7 +9,9 @@ import { useAuthUser } from '@/lib/hooks/useAuth'
 import ProfileAvatar from './ProfileAvatar'
 import PulseEarthMap from './PulseEarthMap'
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:5000'
+import { publicConfig } from '@/lib/config'
+
+const API_BASE = publicConfig.apiOrigin
 
 export default function PulseView() {
     const { data: globe, isLoading: globeLoading } = usePulseGlobe()

@@ -5,6 +5,8 @@ import { io, Socket } from 'socket.io-client'
 import { useAppStore } from '@/lib/store/useAppStore'
 import { useToast } from './useToast'
 
+import { publicConfig } from '@/lib/config'
+
 let socketInstance: Socket | null = null
 
 export function useSocket() {
@@ -18,7 +20,7 @@ export function useSocket() {
         if (!token) return
 
         initialized.current = true
-        socketInstance = io(process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:5000', {
+        socketInstance = io(publicConfig.socketUrl, {
             auth: { token },
             transports: ['websocket'],
             reconnectionAttempts: 5,
