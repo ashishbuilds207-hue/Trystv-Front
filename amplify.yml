@@ -15,8 +15,19 @@ frontend:
     paths:
       - node_modules/**/*
       - .next/cache/**/*
-customHeaders:
-  - pattern: '**/*'
-    headers:
-      - key: Cache-Control
-        value: public, max-age=0, must-revalidate
+  customHeaders:
+    - pattern: '**/*'
+      headers:
+        - key: Cache-Control
+          value: public, max-age=0, must-revalidate
+  # Proxy API + socket to EC2 (live HTTPS site → HTTP backend)
+  customRedirects:
+    - source: '/api/<*>'
+      target: 'http://56.228.19.19/api/<*>'
+      status: '200'
+    - source: '/socket.io/<*>'
+      target: 'http://56.228.19.19/socket.io/<*>'
+      status: '200'
+    - source: '/uploads/<*>'
+      target: 'http://56.228.19.19/uploads/<*>'
+      status: '200'
