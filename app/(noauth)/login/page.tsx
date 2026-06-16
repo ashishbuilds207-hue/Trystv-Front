@@ -270,6 +270,19 @@ export default function LoginPage() {
                                 >
                                     ← Change number
                                 </button>
+                                <button
+                                    type="button"
+                                    onClick={async () => {
+                                        try {
+                                            await sendOtp.mutateAsync(`+91${phone}`)
+                                            setOtp(['', '', '', '', '', ''])
+                                        } catch { /* toast from hook */ }
+                                    }}
+                                    disabled={sendOtp.isPending}
+                                    className="w-full text-center text-crimson-400 text-sm hover:text-crimson-300 transition-colors disabled:opacity-50"
+                                >
+                                    {sendOtp.isPending ? 'Sending…' : 'Resend OTP'}
+                                </button>
                             </form>
                         </>
                     )}

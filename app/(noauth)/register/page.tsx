@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ChevronRight, Check, ArrowRight, User, Heart, Lock } from 'lucide-react'
@@ -28,6 +28,7 @@ export default function RegisterPage() {
     const [step, setStep] = useState(1)
     const [otpStep, setOtpStep] = useState<'phone' | 'otp'>('phone')
     const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', ''])
+    const autoSendDone = useRef(false)
 
     const [form, setForm] = useState({
         alias: '',
@@ -69,10 +70,31 @@ export default function RegisterPage() {
         try {
             await sendOtp.mutateAsync(`+91${form.phone}`)
             setOtpStep('otp')
+            setOtpDigits(['', '', '', '', '', ''])
         } catch {
-            // toast from hook
+            setOtpStep('phone')
         }
     }
+
+    const handlePhoneChange = (value: string) => {
+        const digits = value.replace(/\D/g, '')
+        updateForm('phone', digits)
+        if (otpStep === 'otp') {
+            setOtpStep('phone')
+            setOtpDigits(['', '', '', '', '', ''])
+            autoSendDone.current = false
+        }
+    }
+
+    // Auto-send when arriving at step 4 with phone from login redirect
+    useEffect(() => {
+        if (step !== 4 || otpStep !== 'phone' || form.phone.length !== 10 || autoSendDone.current) return
+        const fromLogin = sessionStorage.getItem('tryst_phone')
+        if (!fromLogin) return
+        autoSendDone.current = true
+        handleSendOtp()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [step, form.phone, otpStep])
 
     const handleOtpChange = (i: number, v: string) => {
         if (v.length > 1) return
@@ -250,7 +272,7 @@ export default function RegisterPage() {
                                         </div>
                                         <div className="relative flex-1">
                                             <input type="tel" value={form.phone}
-                                                onChange={(e) => updateForm('phone', e.target.value.replace(/\D/g, ''))}
+                                                onChange={(e) => handlePhoneChange(e.target.value)}
                                                 placeholder="98765 43210"
                                                 className="tryst-input tracking-widest pr-10"
                                                 maxLength={10} />
@@ -284,9 +306,17 @@ export default function RegisterPage() {
                                         />
                                     ))}
                                 </div>
-                                <button onClick={() => { setOtpStep('phone'); setOtpDigits(['','','','','','']) }}
+                                <button onClick={() => { setOtpStep('phone'); setOtpDigits(['','','','','','']); autoSendDone.current = false }}
                                     className="text-ivory-500 text-xs hover:text-ivory-300 transition-colors">
                                     ← Change number
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleSendOtp}
+                                    disabled={sendOtp.isPending}
+                                    className="text-crimson-400 text-xs hover:text-crimson-300 transition-colors disabled:opacity-50"
+                                >
+                                    {sendOtp.isPending ? 'Sending…' : 'Resend OTP'}
                                 </button>
                             </div>
                         )}
