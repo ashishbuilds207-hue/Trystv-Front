@@ -25,6 +25,7 @@ export default function RegisterPage() {
     const registerMutation = useRegister()
     const sendOtp = useSendOtp()
     const verifyOtp = useVerifyOtp()
+    const [step, setStep] = useState(1)
     const [otpStep, setOtpStep] = useState<'phone' | 'otp'>('phone')
     const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', ''])
 

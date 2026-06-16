@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback, Suspense } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo, Suspense } from 'react'
 import Image from 'next/image'
 import { Send, Timer, Lock, Mic, ArrowLeft, MoreVertical, CheckCircle2, MapPin, AlertTriangle, Flame, Loader2, Phone, PhoneOff } from 'lucide-react'
 import { useMatches, useMessages, useSendMessage, type Message } from '@/lib/hooks/useDiscover'
@@ -45,7 +45,7 @@ function ChatPageContent() {
 
     const activeMatch = matches.find(m => m.id === activeMatchId) ?? null
     const { data: chatData, isLoading: messagesLoading } = useMessages(activeMatchId)
-    const messages: Message[] = chatData?.messages ?? []
+    const messages: Message[] = useMemo(() => chatData?.messages ?? [], [chatData?.messages])
     const deleteTimer = chatData?.deleteTimer ?? 'never'
     const sendMessage = useSendMessage()
     const { data: callConsent } = useCallConsent(activeMatchId)
