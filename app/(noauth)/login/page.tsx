@@ -76,9 +76,13 @@ export default function LoginPage() {
     const handlePhoneSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         if (phone.length < 10) return
-        const { data } = await sendOtp.mutateAsync(`+91${phone}`)
-        if (data?.data?.devOtp) setDevOtp(data.data.devOtp)
-        setStep('otp')
+        try {
+            const { data } = await sendOtp.mutateAsync(`+91${phone}`)
+            if (data?.data?.devOtp) setDevOtp(data.data.devOtp)
+            setStep('otp')
+        } catch {
+            // Error toast shown by useSendOtp
+        }
     }
 
     const handleOtpChange = (index: number, value: string) => {
@@ -97,16 +101,20 @@ export default function LoginPage() {
     const handleOtpSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         if (otp.join('').length < 6) return
-        const { data } = await verifyOtp.mutateAsync({ phone: `+91${phone}`, otp: otp.join('') })
-        if (data.data.isNew) {
-            sessionStorage.setItem('tryst_phone', `+91${phone}`)
-            router.push('/register')
-        } else {
-            localStorage.setItem('tryst_token', data.data.accessToken)
-            localStorage.setItem('tryst_refresh', data.data.refreshToken)
-            setAuthenticated(true)
-            toast.success('Welcome back!', `Good to see you, ${data.data.user.alias}.`)
-            router.push('/tonight')
+        try {
+            const { data } = await verifyOtp.mutateAsync({ phone: `+91${phone}`, otp: otp.join('') })
+            if (data.data.isNew) {
+                sessionStorage.setItem('tryst_phone', `+91${phone}`)
+                router.push('/register')
+            } else {
+                localStorage.setItem('tryst_token', data.data.accessToken)
+                localStorage.setItem('tryst_refresh', data.data.refreshToken)
+                setAuthenticated(true)
+                toast.success('Welcome back!', `Good to see you, ${data.data.user.alias}.`)
+                router.push('/tonight')
+            }
+        } catch {
+            // Error toast shown by useVerifyOtp
         }
     }
 
@@ -256,8 +264,8 @@ export default function LoginPage() {
                                         </button>
                                     </div>
                                 ) : (
-                                    <div className="mt-3 bg-crimson/10 border border-crimson/20 rounded-lg px-3 py-2 text-crimson-300 text-xs">
-                                        Check your phone for the OTP.
+                                    <div className="mt-3 bg-tryst-card border border-tryst-border rounded-lg px-3 py-2 text-ivory-500 text-xs">
+                                        OTP sent. Check your phone — it may take up to a minute.
                                     </div>
                                 )}
                             </div>

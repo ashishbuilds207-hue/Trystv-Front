@@ -68,9 +68,13 @@ export default function RegisterPage() {
 
     const handleSendOtp = async () => {
         if (form.phone.length < 10) return
-        const { data } = await sendOtp.mutateAsync(`+91${form.phone}`)
-        if (data?.data?.devOtp) setDevOtp(data.data.devOtp)
-        setOtpStep('otp')
+        try {
+            const { data } = await sendOtp.mutateAsync(`+91${form.phone}`)
+            if (data?.data?.devOtp) setDevOtp(data.data.devOtp)
+            setOtpStep('otp')
+        } catch {
+            // toast from hook
+        }
     }
 
     const handleOtpChange = (i: number, v: string) => {
@@ -80,21 +84,25 @@ export default function RegisterPage() {
     }
 
     const handleSubmit = async () => {
-        const { data } = await verifyOtp.mutateAsync({ phone: `+91${form.phone}`, otp: otpDigits.join('') })
-        if (!data.data) return
+        try {
+            const { data } = await verifyOtp.mutateAsync({ phone: `+91${form.phone}`, otp: otpDigits.join('') })
+            if (!data.data) return
 
-        await registerMutation.mutateAsync({
-            phone: `+91${form.phone}`,
-            alias: form.alias,
-            age: Number(form.age),
-            gender: form.gender as string,
-            relationshipStatus: form.relationshipStatus as string,
-            desireTags: form.desireTags,
-            profession: form.profession,
-            city: form.city,
-        })
-        sessionStorage.removeItem('tryst_phone')
-        router.push('/onboarding')
+            await registerMutation.mutateAsync({
+                phone: `+91${form.phone}`,
+                alias: form.alias,
+                age: Number(form.age),
+                gender: form.gender as string,
+                relationshipStatus: form.relationshipStatus as string,
+                desireTags: form.desireTags,
+                profession: form.profession,
+                city: form.city,
+            })
+            sessionStorage.removeItem('tryst_phone')
+            router.push('/onboarding')
+        } catch {
+            // toasts from hooks
+        }
     }
 
     const handleNext = () => {

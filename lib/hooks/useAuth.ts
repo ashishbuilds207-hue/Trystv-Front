@@ -23,9 +23,16 @@ export function useSendOtp() {
     const toast = useToast()
     return useMutation({
         mutationFn: (phone: string) => authApi.sendOtp(phone),
-        onSuccess: () => toast.success('OTP Sent', 'Check your phone for the verification code.'),
+        onSuccess: (res) => {
+            const devOtp = res.data?.data?.devOtp
+            if (devOtp) {
+                toast.success('OTP ready', `Use code ${devOtp} to continue.`)
+            } else {
+                toast.success('OTP sent', 'Check your phone for the verification code.')
+            }
+        },
         onError: (e: AxiosError<{ message: string }>) =>
-            toast.error('Failed to send OTP', e.response?.data?.message),
+            toast.error('Failed to send OTP', e.response?.data?.message || 'Please try again.'),
     })
 }
 
@@ -33,8 +40,12 @@ export function useVerifyOtp() {
     const toast = useToast()
     return useMutation({
         mutationFn: ({ phone, otp }: { phone: string; otp: string }) => authApi.verifyOtp(phone, otp),
-        onError: (e: AxiosError<{ message: string }>) =>
-            toast.error('Invalid OTP', e.response?.data?.message || 'Please try again.'),
+        onError: (e: AxiosError<{ message: string }>) => {
+            const status = e.response?.status
+            const msg = e.response?.data?.message
+            if (status === 400) toast.error('Invalid OTP', msg || 'Check the code and try again.')
+            else toast.error('Verification failed', msg || 'Please try again.')
+        },
     })
 }
 
