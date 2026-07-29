@@ -2,18 +2,84 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo, Suspense } from 'react'
 import Image from 'next/image'
-import { Send, Timer, Lock, Mic, ArrowLeft, MoreVertical, Check, CheckCheck, CheckCircle2, MapPin, AlertTriangle, Flame, Loader2, Phone, PhoneOff, Smile } from 'lucide-react'
+import {
+    Send, Timer, Lock, Mic, ArrowLeft, MoreVertical, Check, CheckCheck, CheckCircle2,
+    MapPin, AlertTriangle, Flame, Loader2, Phone, PhoneOff, Smile, X, Clock, RotateCcw,
+} from 'lucide-react'
 import { useMatches, useMessages, useSendMessage, type Message } from '@/lib/hooks/useDiscover'
 import { useCallConsent, useSetCallConsent } from '@/lib/hooks/useFeatures'
-import { getSocket } from '@/lib/hooks/useSocket'
+import { useAuthUser } from '@/lib/hooks/useAuth'
+import { joinChat, leaveChat, emitTyping } from '@/lib/hooks/useSocket'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { useQueryClient } from '@tanstack/react-query'
-import { formatDistanceToNow } from 'date-fns'
+import { formatDistanceToNow, format, isToday, isYesterday, differenceInMinutes } from 'date-fns'
+import { DEFAULT_AVATAR } from '@/components/tryst/ProfileAvatar'
+import { OnlineDot } from '@/components/tryst/OnlineStatus'
+import { useAppStore } from '@/lib/store/useAppStore'
+import { messageApi } from '@/lib/api/auth'
 
 const TIMER_LABELS: Record<string, string> = { '24h': '24 hours', '72h': '72 hours', '7d': '7 days', never: 'Never' }
 
+/** Same-time cluster: hide timestamp unless hover (Instagram-style) */
+const CLUSTER_MINUTES = 60
+
 function msgTime(d: string) {
     try { return formatDistanceToNow(new Date(d), { addSuffix: true }) } catch { return '' }
+}
+
+function clockTime(d: string) {
+    try { return format(new Date(d), 'h:mm a') } catch { return '' }
+}
+
+/** Center divider when gap is large — like Instagram */
+function dividerLabel(d: string) {
+    try {
+        const date = new Date(d)
+        const time = format(date, 'h:mm a')
+        if (isToday(date)) return `Today ${time}`
+        if (isYesterday(date)) return `Yesterday ${time}`
+        return format(date, 'MMM d, yyyy · h:mm a')
+    } catch {
+        return ''
+    }
+}
+
+function shouldShowTimeDivider(curr: Message, prev: Message | null) {
+    if (!prev) return true
+    try {
+        return differenceInMinutes(new Date(curr.createdAt), new Date(prev.createdAt)) >= CLUSTER_MINUTES
+    } catch {
+        return true
+    }
+}
+
+function isSameCluster(curr: Message, next: Message | null, meId: string | null, partnerId: string) {
+    if (!next) return false
+    const currSent = meId ? curr.senderId === meId : curr.senderId !== partnerId
+    const nextSent = meId ? next.senderId === meId : next.senderId !== partnerId
+    if (currSent !== nextSent) return false
+    try {
+        return differenceInMinutes(new Date(next.createdAt), new Date(curr.createdAt)) < CLUSTER_MINUTES
+    } catch {
+        return false
+    }
+}
+
+/** ✓ sending → ✓ sent → ✓✓ delivered → ✓✓ read (blue) */
+function MessageTicks({ msg }: { msg: Message }) {
+    if (msg.status === 'sending') {
+        return <Clock className="w-3.5 h-3.5 text-ivory-600 animate-pulse" aria-label="Sending" />
+    }
+    if (msg.status === 'failed') {
+        return <span className="text-[10px] text-crimson-300 font-medium">Failed</span>
+    }
+    if (msg.isRead) {
+        return <CheckCheck className="w-3.5 h-3.5 text-blue-400" aria-label="Seen" title="Seen" />
+    }
+    if (msg.deliveredAt || msg.status === 'sent') {
+        return <CheckCheck className="w-3.5 h-3.5 text-ivory-500" aria-label="Delivered" title="Delivered" />
+    }
+    return <Check className="w-3.5 h-3.5 text-ivory-600" aria-label="Sent" title="Sent" />
 }
 
 export default function ChatPage() {
@@ -34,68 +100,176 @@ function ChatPageContent() {
     const searchParams = useSearchParams()
     const router = useRouter()
     const qc = useQueryClient()
+    const currentUserId = useAppStore((s) => s.currentUserId)
+    const { data: me } = useAuthUser()
 
     const { data: matches = [], isLoading: matchesLoading } = useMatches()
     const [activeMatchId, setActiveMatchId] = useState<string | null>(searchParams.get('match'))
     const [inputText, setInputText] = useState('')
-    const [isTyping, setIsTyping] = useState(false)
+    const [partnerTyping, setPartnerTyping] = useState(false)
     const [showEmoji, setShowEmoji] = useState(false)
     const [showDeleteMenu, setShowDeleteMenu] = useState(false)
     const EMOJIS = ['😊', '🔥', '❤️', '😉', '🌹', '✨', '😂', '🥂', '💋', '🌙']
     const messagesEndRef = useRef<HTMLDivElement>(null)
     const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const inputRef = useRef<HTMLInputElement>(null)
 
     const activeMatch = matches.find(m => m.id === activeMatchId) ?? null
     const { data: chatData, isLoading: messagesLoading } = useMessages(activeMatchId)
-    const messages: Message[] = useMemo(() => chatData?.messages ?? [], [chatData?.messages])
+    // One message once — drop duplicate ids (realtime + refetch)
+    const messages: Message[] = useMemo(() => {
+        const list = chatData?.messages ?? []
+        const seen = new Set<string>()
+        return list.filter((m) => {
+            if (!m?.id || seen.has(m.id)) return false
+            seen.add(m.id)
+            return true
+        })
+    }, [chatData?.messages])
     const deleteTimer = chatData?.deleteTimer ?? 'never'
     const sendMessage = useSendMessage()
     const { data: callConsent } = useCallConsent(activeMatchId)
     const setCallConsent = useSetCallConsent()
+    const partnerName = activeMatch?.alias || 'Them'
+    const myId = currentUserId || me?.id || null
 
-    // Auto-scroll
-    useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
-
-    // Join socket room when match selected
+    // Auto-scroll on new messages / typing
     useEffect(() => {
-        const socket = getSocket()
-        if (!socket || !activeMatchId) return
-        socket.emit('join_chat', activeMatchId)
-        socket.on('new_message', ({ matchId }: { matchId: string }) => {
-            if (matchId === activeMatchId) qc.invalidateQueries({ queryKey: ['messages', matchId] })
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }, [messages, partnerTyping])
+
+    // Mark partner messages as read when chat is open (updates their ✓✓ to blue)
+    useEffect(() => {
+        if (!activeMatchId) return
+        void messageApi.markConversationRead(activeMatchId).then(() => {
             qc.invalidateQueries({ queryKey: ['matches'] })
         })
-        socket.on('partner_typing', ({ isTyping: t }: { isTyping: boolean }) => setIsTyping(t))
-        return () => {
-            socket.emit('leave_chat', activeMatchId)
-            socket.off('new_message')
-            socket.off('partner_typing')
-        }
-    }, [activeMatchId, qc])
+    }, [activeMatchId, messages.length, qc])
 
-    // Emit typing indicator
+    // Realtime: messages + typing (other person only)
+    useEffect(() => {
+        if (!activeMatchId) return
+        setPartnerTyping(false)
+        joinChat(
+            activeMatchId,
+            {
+                onNewMessage: ({ matchId, senderId, message }) => {
+                    if (matchId && matchId !== activeMatchId) return
+
+                    // Partner sent → stop their typing indicator
+                    if (senderId && activeMatch?.partnerId && senderId === activeMatch.partnerId) {
+                        setPartnerTyping(false)
+                    }
+
+                    // Merge single message into cache (avoid duplicate bubbles)
+                    if (message?.id) {
+                        const incoming: Message = {
+                            id: String(message.id),
+                            senderId: String(message.sender_id || senderId || ''),
+                            content: String(message.content || ''),
+                            type: String(message.type || 'text'),
+                            isRead: !!message.is_read,
+                            isDeleted: false,
+                            expiresAt: (message.expires_at as string) || null,
+                            deliveredAt: (message.delivered_at as string) || null,
+                            createdAt: String(message.created_at || new Date().toISOString()),
+                            senderAlias: '',
+                            senderAvatar: '',
+                            status: 'sent',
+                        }
+                        qc.setQueryData(
+                            ['messages', activeMatchId],
+                            (old: { messages: Message[]; convId: string; deleteTimer: string } | undefined) => {
+                                if (!old) {
+                                    return { messages: [incoming], convId: String(message.conversation_id || ''), deleteTimer: 'never' }
+                                }
+                                if (old.messages.some((m) => m.id === incoming.id)) return old
+                                // Drop matching optimistic temp bubble from me
+                                const withoutTemp = old.messages.filter(
+                                    (m) => !(m.id.startsWith('temp-') && m.content === incoming.content && m.senderId === incoming.senderId),
+                                )
+                                return { ...old, messages: [...withoutTemp, incoming] }
+                            },
+                        )
+                    } else {
+                        qc.invalidateQueries({ queryKey: ['messages', activeMatchId] })
+                    }
+                    qc.invalidateQueries({ queryKey: ['matches'] })
+                    if (senderId && myId && senderId !== myId) {
+                        void messageApi.markConversationRead(activeMatchId)
+                    }
+                },
+                onTyping: ({ isTyping, userId }) => {
+                    // Only the other person in this chat — never myself
+                    if (userId && myId && userId === myId) return
+                    if (userId && activeMatch?.partnerId && userId !== activeMatch.partnerId) return
+                    setPartnerTyping(isTyping)
+                },
+            },
+            activeMatch?.convId || chatData?.convId,
+        )
+        return () => {
+            leaveChat(activeMatchId)
+            setPartnerTyping(false)
+        }
+    }, [activeMatchId, activeMatch?.convId, activeMatch?.partnerId, chatData?.convId, qc, myId])
+
+    const stopTyping = useCallback(() => {
+        if (!activeMatchId) return
+        emitTyping(activeMatchId, false, { userId: myId || undefined, alias: me?.alias })
+        if (typingTimerRef.current) {
+            clearTimeout(typingTimerRef.current)
+            typingTimerRef.current = null
+        }
+    }, [activeMatchId, myId, me?.alias])
+
     const handleInputChange = (val: string) => {
         setInputText(val)
-        const socket = getSocket()
-        if (socket && activeMatchId) {
-            socket.emit('typing', { matchId: activeMatchId, isTyping: val.length > 0 })
+        if (!activeMatchId) return
+        const meta = { userId: myId || undefined, alias: me?.alias || undefined }
+        if (val.length > 0) {
+            emitTyping(activeMatchId, true, meta)
             if (typingTimerRef.current) clearTimeout(typingTimerRef.current)
             typingTimerRef.current = setTimeout(() => {
-                socket.emit('typing', { matchId: activeMatchId, isTyping: false })
-            }, 2000)
+                emitTyping(activeMatchId, false, meta)
+            }, 1800)
+        } else {
+            stopTyping()
         }
     }
 
-    const handleSend = useCallback(async () => {
+    /** Clear draft — cancel send (message not stored) */
+    const cancelDraft = () => {
+        setInputText('')
+        stopTyping()
+        inputRef.current?.focus()
+    }
+
+    /** Instant optimistic send — input clears immediately; can keep typing next */
+    const handleSend = useCallback(() => {
         if (!inputText.trim() || !activeMatchId) return
         const text = inputText.trim()
         setInputText('')
-        const socket = getSocket()
-        if (socket) socket.emit('typing', { matchId: activeMatchId, isTyping: false })
-        await sendMessage.mutateAsync({ matchId: activeMatchId, content: text })
-    }, [inputText, activeMatchId, sendMessage])
+        stopTyping()
+        // Fire-and-forget so user can send continuously
+        sendMessage.mutate({ matchId: activeMatchId, content: text })
+        inputRef.current?.focus()
+    }, [inputText, activeMatchId, sendMessage, stopTyping])
+
+    const retryFailed = (msg: Message) => {
+        if (!activeMatchId || msg.status !== 'failed') return
+        // Remove failed bubble then re-send
+        qc.setQueryData(['messages', activeMatchId], (old: { messages: Message[]; convId: string; deleteTimer: string } | undefined) => {
+            if (!old) return old
+            return { ...old, messages: old.messages.filter((m) => m.id !== msg.id) }
+        })
+        sendMessage.mutate({ matchId: activeMatchId, content: msg.content })
+    }
 
     const selectMatch = (id: string) => {
+        setInputText('')
+        stopTyping()
+        setPartnerTyping(false)
         setActiveMatchId(id)
         router.replace(`/chat?match=${id}`, { scroll: false })
     }
@@ -126,9 +300,14 @@ function ChatPageContent() {
                             className={`w-full flex items-center gap-3 px-4 py-4 hover:bg-tryst-card transition-all border-b border-tryst-border/50 ${activeMatchId === match.id ? 'bg-tryst-card border-l-2 border-l-crimson' : ''}`}>
                             <div className="relative flex-shrink-0">
                                 <div className="w-12 h-12 rounded-full overflow-hidden border border-tryst-border">
-                                    <Image src={match.avatarUrl || match.photoUrls?.[0]} alt={match.alias} width={48} height={48} className="object-cover w-full h-full" unoptimized />
+                                    <Image src={match.avatarUrl || match.photoUrls?.[0] || DEFAULT_AVATAR} alt={match.alias} width={48} height={48} className="object-cover w-full h-full" unoptimized />
                                 </div>
-                                <div className="absolute bottom-0 right-0 w-3 h-3 bg-success rounded-full border-2 border-tryst-bg" />
+                                <OnlineDot
+                                    online={!!match.isOnline}
+                                    size="md"
+                                    className="absolute bottom-0 right-0"
+                                    borderClass="border-tryst-bg"
+                                />
                             </div>
                             <div className="flex-1 text-left min-w-0">
                                 <div className="flex justify-between items-center">
@@ -136,7 +315,7 @@ function ChatPageContent() {
                                     {match.lastMessageAt && <span className="text-ivory-600 text-xs">{msgTime(match.lastMessageAt)}</span>}
                                 </div>
                                 <p className="text-ivory-500 text-xs truncate mt-0.5">
-                                    {match.lastMessage ?? 'Start a conversation...'}
+                                    {match.isOnline ? 'Online' : match.lastMessage ?? 'Start a conversation...'}
                                 </p>
                             </div>
                             {match.unreadCount > 0 && (
@@ -166,17 +345,28 @@ function ChatPageContent() {
                             </button>
                             <div className="relative">
                                 <div className="w-10 h-10 rounded-full overflow-hidden">
-                                    <Image src={activeMatch.avatarUrl || activeMatch.photoUrls?.[0]} alt={activeMatch.alias} width={40} height={40} className="object-cover w-full h-full" unoptimized />
+                                    <Image src={activeMatch.avatarUrl || activeMatch.photoUrls?.[0] || DEFAULT_AVATAR} alt={activeMatch.alias} width={40} height={40} className="object-cover w-full h-full" unoptimized />
                                 </div>
-                                <div className="absolute bottom-0 right-0 w-3 h-3 bg-success rounded-full border-2 border-tryst-bg-2" />
+                                <OnlineDot
+                                    online={!!activeMatch.isOnline}
+                                    size="md"
+                                    className="absolute bottom-0 right-0"
+                                    borderClass="border-tryst-bg-2"
+                                />
                             </div>
                             <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-1.5">
                                     <h3 className="text-ivory-100 font-semibold text-sm">{activeMatch.alias}</h3>
                                     {activeMatch.isVerified && <CheckCircle2 className="w-3.5 h-3.5 text-crimson" />}
                                 </div>
-                                <p className="text-ivory-500 text-xs flex items-center gap-1">
-                                    <MapPin className="w-3 h-3" />{activeMatch.city}
+                                <p className={`text-xs flex items-center gap-1 ${
+                                    partnerTyping ? 'text-crimson-300' : activeMatch.isOnline ? 'text-emerald-400' : 'text-ivory-500'
+                                }`}>
+                                    {partnerTyping
+                                        ? `${partnerName} is typing…`
+                                        : activeMatch.isOnline
+                                            ? 'Online now'
+                                            : <><MapPin className="w-3 h-3" />{activeMatch.city}</>}
                                 </p>
                             </div>
                             <button className="w-8 h-8 rounded-full bg-tryst-card border border-tryst-border flex items-center justify-center text-ivory-400 hover:text-ivory-200 transition-colors">
@@ -241,9 +431,9 @@ function ChatPageContent() {
                             )}
                         </div>
 
-                        {/* Messages */}
-                        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                            <div className="flex items-center gap-2 justify-center py-2">
+                        {/* Messages — Instagram-style time: hide when same cluster, show on hover */}
+                        <div className="flex-1 overflow-y-auto p-4 space-y-1">
+                            <div className="flex items-center gap-2 justify-center py-2 mb-2">
                                 <div className="h-px flex-1 bg-tryst-border" />
                                 <div className="flex items-center gap-1.5 text-ivory-600 text-xs">
                                     <Lock className="w-3 h-3" /> End-to-end encrypted
@@ -253,31 +443,94 @@ function ChatPageContent() {
 
                             {messagesLoading ? (
                                 <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 text-crimson animate-spin" /></div>
-                            ) : messages.map((msg) => {
-                                const isSent = msg.senderId === activeMatch.partnerId ? false : true
+                            ) : messages.map((msg, i) => {
+                                const prev = i > 0 ? messages[i - 1] : null
+                                const next = i < messages.length - 1 ? messages[i + 1] : null
+                                const isSent = myId
+                                    ? msg.senderId === myId
+                                    : msg.senderId !== activeMatch.partnerId
+                                const showDivider = shouldShowTimeDivider(msg, prev)
+                                const clusteredWithNext = isSameCluster(msg, next, myId, activeMatch.partnerId)
+                                const clusteredWithPrev = prev
+                                    ? isSameCluster(prev, msg, myId, activeMatch.partnerId)
+                                    : false
+                                const isClusterTail = !clusteredWithNext
+
                                 return (
-                                    <div key={msg.id} className={`flex ${isSent ? 'justify-end' : 'justify-start'} gap-2`}>
-                                        {!isSent && (
-                                            <div className="w-7 h-7 rounded-full overflow-hidden flex-shrink-0 mt-auto">
-                                                <Image src={activeMatch.avatarUrl} alt="" width={28} height={28} className="object-cover w-full h-full" unoptimized />
+                                    <div key={msg.id}>
+                                        {showDivider && (
+                                            <div className="flex justify-center py-3">
+                                                <span className="text-[11px] text-ivory-500 font-medium px-3 py-1 rounded-full bg-tryst-card/60 border border-tryst-border/50">
+                                                    {dividerLabel(msg.createdAt)}
+                                                </span>
                                             </div>
                                         )}
-                                        <div className={`max-w-xs lg:max-w-sm flex flex-col gap-1 ${isSent ? 'items-end' : 'items-start'}`}>
-                                            <div className={`px-4 py-2.5 text-sm leading-relaxed ${isSent ? 'chat-bubble-sent' : 'chat-bubble-received'}`}>
-                                                {msg.content}
-                                            </div>
-                                            <div className={`flex items-center gap-1 text-ivory-600 text-xs ${isSent ? 'flex-row-reverse' : ''}`}>
-                                                <span>{msgTime(msg.createdAt)}</span>
-                                                {isSent && (
-                                                    msg.isRead ? (
-                                                        <CheckCheck className="w-3.5 h-3.5 text-blue-400" aria-label="Read" />
-                                                    ) : (
-                                                        <Check className="w-3.5 h-3.5 text-ivory-600" aria-label="Delivered" />
-                                                    )
+                                        <div
+                                            className={`group flex ${isSent ? 'justify-end' : 'justify-start'} gap-2 ${
+                                                clusteredWithPrev ? 'mt-0.5' : 'mt-2'
+                                            }`}
+                                        >
+                                            {!isSent && (
+                                                <div className={`w-7 h-7 rounded-full overflow-hidden flex-shrink-0 mt-auto ${
+                                                    clusteredWithNext ? 'invisible' : ''
+                                                }`}>
+                                                    <Image src={activeMatch.avatarUrl || DEFAULT_AVATAR} alt="" width={28} height={28} className="object-cover w-full h-full" unoptimized />
+                                                </div>
+                                            )}
+                                            <div className={`max-w-xs lg:max-w-sm flex flex-col gap-0.5 ${isSent ? 'items-end' : 'items-start'}`}>
+                                                <div className={`relative px-4 py-2.5 text-sm leading-relaxed ${
+                                                    isSent ? 'chat-bubble-sent' : 'chat-bubble-received'
+                                                } ${msg.status === 'failed' ? 'opacity-70 ring-1 ring-crimson/40' : ''} ${
+                                                    msg.status === 'sending' ? 'opacity-80' : ''
+                                                }`}>
+                                                    {msg.content}
+                                                    {/* Hover time — Instagram style */}
+                                                    <span
+                                                        className={`pointer-events-none absolute ${
+                                                            isSent ? 'right-full mr-2' : 'left-full ml-2'
+                                                        } top-1/2 -translate-y-1/2 whitespace-nowrap text-[10px] text-ivory-400 opacity-0 group-hover:opacity-100 transition-opacity duration-150`}
+                                                    >
+                                                        {msg.status === 'sending' ? 'Sending…' : clockTime(msg.createdAt)}
+                                                    </span>
+                                                </div>
+
+                                                {/* Under-bubble: ticks only on last of cluster; full time on hover (Instagram) */}
+                                                {(isClusterTail || msg.status === 'sending' || msg.status === 'failed') && (
+                                                    <div
+                                                        className={`flex items-center gap-1.5 text-ivory-600 text-[10px] ${
+                                                            isSent ? 'flex-row-reverse' : ''
+                                                        }`}
+                                                    >
+                                                        {(msg.status === 'sending' || msg.status === 'failed') && (
+                                                            <span>{msg.status === 'sending' ? 'Sending…' : clockTime(msg.createdAt)}</span>
+                                                        )}
+                                                        {msg.status !== 'sending' && msg.status !== 'failed' && (
+                                                            <span className="opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                {clockTime(msg.createdAt)}
+                                                            </span>
+                                                        )}
+                                                        {isSent && <MessageTicks msg={msg} />}
+                                                        {isSent && msg.status === 'failed' && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => retryFailed(msg)}
+                                                                className="inline-flex items-center gap-0.5 text-crimson-300 hover:text-crimson-200"
+                                                                title="Retry"
+                                                            >
+                                                                <RotateCcw className="w-3 h-3" />
+                                                            </button>
+                                                        )}
+                                                        {msg.expiresAt && (
+                                                            <div className="flex items-center gap-0.5 text-gold-600">
+                                                                <Timer className="w-2.5 h-2.5" />
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 )}
-                                                {msg.expiresAt && (
-                                                    <div className="flex items-center gap-0.5 text-gold-600">
-                                                        <Timer className="w-2.5 h-2.5" />
+                                                {!isClusterTail && msg.status !== 'sending' && msg.status !== 'failed' && (
+                                                    <div className={`flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-ivory-600 ${isSent ? 'flex-row-reverse' : ''}`}>
+                                                        <span>{clockTime(msg.createdAt)}</span>
+                                                        {isSent && <MessageTicks msg={msg} />}
                                                     </div>
                                                 )}
                                             </div>
@@ -286,15 +539,31 @@ function ChatPageContent() {
                                 )
                             })}
 
-                            {isTyping && (
-                                <div className="flex items-center gap-2">
-                                    <div className="w-7 h-7 rounded-full overflow-hidden flex-shrink-0">
-                                        <Image src={activeMatch.avatarUrl} alt="" width={28} height={28} className="object-cover w-full h-full" unoptimized />
+                            {partnerTyping && (
+                                <div className="flex items-end gap-2 mt-3 mb-1 animate-fade-in">
+                                    <div className="w-7 h-7 rounded-full overflow-hidden flex-shrink-0 border border-tryst-border">
+                                        <Image
+                                            src={activeMatch.avatarUrl || DEFAULT_AVATAR}
+                                            alt={partnerName}
+                                            width={28}
+                                            height={28}
+                                            className="object-cover w-full h-full"
+                                            unoptimized
+                                        />
                                     </div>
-                                    <div className="chat-bubble-received px-4 py-3 flex items-center gap-1">
-                                        {[0, 0.2, 0.4].map((d) => (
-                                            <div key={d} className="w-1.5 h-1.5 bg-ivory-400 rounded-full animate-typing" style={{ animationDelay: `${d}s` }} />
-                                        ))}
+                                    <div className="flex flex-col items-start gap-1 max-w-xs">
+                                        <span className="text-[11px] font-medium text-crimson-300 px-1">
+                                            {partnerName} is typing…
+                                        </span>
+                                        <div className="chat-bubble-received px-4 py-2.5 flex items-center gap-1.5">
+                                            {[0, 0.15, 0.3].map((d) => (
+                                                <div
+                                                    key={d}
+                                                    className="w-1.5 h-1.5 bg-ivory-400 rounded-full animate-typing"
+                                                    style={{ animationDelay: `${d}s` }}
+                                                />
+                                            ))}
+                                        </div>
                                     </div>
                                 </div>
                             )}
@@ -306,32 +575,60 @@ function ChatPageContent() {
                             {showEmoji && (
                                 <div className="flex flex-wrap gap-2 mb-3 p-2 bg-tryst-card rounded-xl border border-tryst-border">
                                     {EMOJIS.map(e => (
-                                        <button key={e} onClick={() => setInputText(t => t + e)} className="text-xl hover:scale-110 transition-transform">{e}</button>
+                                        <button key={e} type="button" onClick={() => handleInputChange(inputText + e)} className="text-xl hover:scale-110 transition-transform">{e}</button>
                                     ))}
                                 </div>
                             )}
-                            <div className="flex items-center gap-3">
-                                <button onClick={() => setShowEmoji(p => !p)} className="w-9 h-9 rounded-full bg-tryst-card border border-tryst-border flex items-center justify-center text-ivory-400 hover:text-ivory-200 flex-shrink-0">
+                            <div className="flex items-center gap-2 sm:gap-3">
+                                <button type="button" onClick={() => setShowEmoji(p => !p)} className="w-9 h-9 rounded-full bg-tryst-card border border-tryst-border flex items-center justify-center text-ivory-400 hover:text-ivory-200 flex-shrink-0">
                                     <Smile className="w-4 h-4" />
                                 </button>
                                 <div className="flex-1 relative">
-                                    <input type="text" value={inputText}
+                                    <input
+                                        ref={inputRef}
+                                        type="text"
+                                        value={inputText}
                                         onChange={(e) => handleInputChange(e.target.value)}
-                                        onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' && !e.shiftKey) {
+                                                e.preventDefault()
+                                                handleSend()
+                                            }
+                                            if (e.key === 'Escape') {
+                                                e.preventDefault()
+                                                cancelDraft()
+                                            }
+                                        }}
                                         placeholder={`Message ${activeMatch.alias}...`}
-                                        className="tryst-input py-2.5 text-sm" />
+                                        className="tryst-input py-2.5 text-sm pr-10"
+                                    />
+                                    {inputText.length > 0 && (
+                                        <button
+                                            type="button"
+                                            onClick={cancelDraft}
+                                            title="Cancel (Esc) — don’t send"
+                                            className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full flex items-center justify-center text-ivory-500 hover:text-ivory-200 hover:bg-tryst-bg"
+                                        >
+                                            <X className="w-3.5 h-3.5" />
+                                        </button>
+                                    )}
                                 </div>
-                                <button className="w-9 h-9 rounded-full bg-tryst-card border border-tryst-border flex items-center justify-center text-ivory-400 hover:text-ivory-200 transition-colors flex-shrink-0">
+                                <button type="button" className="hidden sm:flex w-9 h-9 rounded-full bg-tryst-card border border-tryst-border items-center justify-center text-ivory-400 hover:text-ivory-200 transition-colors flex-shrink-0">
                                     <Mic className="w-4 h-4" />
                                 </button>
-                                <button onClick={handleSend} disabled={!inputText.trim() || sendMessage.isPending}
-                                    className="w-10 h-10 rounded-full bg-crimson flex items-center justify-center text-white shadow-crimson hover:shadow-crimson-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0">
-                                    {sendMessage.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                                <button
+                                    type="button"
+                                    onClick={handleSend}
+                                    disabled={!inputText.trim()}
+                                    className="w-10 h-10 rounded-full bg-crimson flex items-center justify-center text-white shadow-crimson hover:shadow-crimson-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+                                    title="Send"
+                                >
+                                    <Send className="w-4 h-4" />
                                 </button>
                             </div>
                             <div className="flex items-center gap-1.5 mt-2 justify-center">
                                 <AlertTriangle className="w-3 h-3 text-ivory-600" />
-                                <p className="text-ivory-600 text-xs">Use Safe Word to instantly block this conversation</p>
+                                <p className="text-ivory-600 text-xs">Hover a message for time · Esc cancels draft</p>
                             </div>
                         </div>
                     </>

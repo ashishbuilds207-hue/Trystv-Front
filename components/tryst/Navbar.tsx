@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { Menu, X } from 'lucide-react'
 import { TrystLogo } from '@/components/tryst/TrystLogo'
+import ThemeToggle from '@/components/tryst/ThemeToggle'
 
 interface NavbarProps {
     marketing?: boolean
@@ -62,6 +63,7 @@ export function Navbar({ marketing = false }: NavbarProps) {
                 </div>
 
                 <div className="hidden md:flex items-center gap-3">
+                    <ThemeToggle compact />
                     <Link href="/login" className={signInClass}>
                         Sign In
                     </Link>

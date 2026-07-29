@@ -1,11 +1,12 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ChevronRight, ChevronLeft, Camera, Loader2 } from 'lucide-react'
 import { userApi } from '@/lib/api/auth'
 import { useToast } from '@/lib/hooks/useToast'
 import { useQueryClient } from '@tanstack/react-query'
+import { useAuthUser } from '@/lib/hooks/useAuth'
 
 const ARCHETYPES = [
     { key: 'WANDERER', name: 'Wanderer', desc: 'Curious, restless, always planning the next escape' },
@@ -21,8 +22,11 @@ export default function OnboardingPage() {
     const router = useRouter()
     const toast = useToast()
     const qc = useQueryClient()
+    const { data: me, isLoading } = useAuthUser()
     const [step, setStep] = useState(0)
     const [saving, setSaving] = useState(false)
+    const [mounted, setMounted] = useState(false)
+    useEffect(() => { setMounted(true) }, [])
 
     const [form, setForm] = useState({
         alias: '', age: '', gender: '', heightCm: '', profession: '',
@@ -32,7 +36,34 @@ export default function OnboardingPage() {
         bio: '',
     })
 
+    // Pre-fill once with the existing profile so users can review & edit old details.
+    const prefilled = useRef(false)
+    useEffect(() => {
+        if (prefilled.current || !me) return
+        prefilled.current = true
+        setForm(prev => ({
+            ...prev,
+            alias: me.alias ?? prev.alias,
+            age: me.age != null ? String(me.age) : prev.age,
+            gender: me.gender ?? prev.gender,
+            heightCm: me.heightCm != null ? String(me.heightCm) : prev.heightCm,
+            profession: me.profession ?? prev.profession,
+            desireArchetype: me.desireArchetype ?? prev.desireArchetype,
+            seeking: me.seeking ?? prev.seeking,
+            orientation: me.orientation ?? prev.orientation,
+            agePrefMin: me.agePrefMin ?? prev.agePrefMin,
+            agePrefMax: me.agePrefMax ?? prev.agePrefMax,
+            maxDistanceKm: me.maxDistanceKm ?? prev.maxDistanceKm,
+            availabilityMask: me.availabilityMask ?? prev.availabilityMask,
+            blurDefault: me.blurDefault ?? prev.blurDefault,
+            incognitoOnStart: me.incognitoOnStart ?? prev.incognitoOnStart,
+            bio: me.bio ?? prev.bio,
+        }))
+    }, [me])
+
     const set = (k: string, v: unknown) => setForm(p => ({ ...p, [k]: v }))
+
+    const isEditing = !!me?.alias
 
     const save = async () => {
         setSaving(true)
@@ -58,8 +89,14 @@ export default function OnboardingPage() {
             await userApi.updateProfile(payload)
             qc.invalidateQueries({ queryKey: ['me'] })
             qc.invalidateQueries({ queryKey: ['profile', 'me'] })
-            toast.success('Profile complete', 'Your Desire DNA is set.')
-            router.push('/tonight')
+            qc.invalidateQueries({ queryKey: ['orbit-feed'] })
+            if (isEditing) {
+                toast.success('Profile updated', 'Your changes are saved.')
+                router.push('/you')
+            } else {
+                toast.success('Profile complete', 'Your Desire DNA is set.')
+                router.push('/tonight')
+            }
         } catch {
             toast.error('Save failed', 'Please try again.')
         } finally {
@@ -70,10 +107,16 @@ export default function OnboardingPage() {
     const next = () => step < STEPS.length - 1 ? setStep(s => s + 1) : save()
     const back = () => step > 0 && setStep(s => s - 1)
 
+    if (mounted && isLoading) return (
+        <div className="min-h-[60vh] flex items-center justify-center">
+            <Loader2 className="w-8 h-8 text-crimson animate-spin" />
+        </div>
+    )
+
     return (
         <div className="page-content py-8 pb-24 min-h-screen page-transition">
             <div className="mb-8">
-                <p className="font-mono text-[10px] tracking-[0.28em] uppercase text-gold-400 mb-2">Desire DNA</p>
+                <p className="font-mono text-[10px] tracking-[0.28em] uppercase text-gold-400 mb-2">{isEditing ? 'Edit profile' : 'Desire DNA'}</p>
                 <h1 className="font-playfair text-2xl text-ivory-100">{STEPS[step]}</h1>
                 <div className="flex gap-1.5 mt-4">
                     {STEPS.map((_, i) => (
@@ -180,7 +223,7 @@ export default function OnboardingPage() {
                 <button onClick={next} disabled={saving}
                     className="flex-1 py-3 bg-crimson-gradient text-white rounded-xl font-medium flex items-center justify-center gap-2 disabled:opacity-50">
                     {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : (
-                        <>{step === STEPS.length - 1 ? 'Enter TRYST' : 'Continue'} <ChevronRight className="w-4 h-4" /></>
+                        <>{step === STEPS.length - 1 ? (isEditing ? 'Save changes' : 'Enter TRYST') : 'Continue'} <ChevronRight className="w-4 h-4" /></>
                     )}
                 </button>
             </div>

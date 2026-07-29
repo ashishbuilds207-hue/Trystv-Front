@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { GoogleOAuthProvider } from '@react-oauth/google'
 import { useState } from 'react'
 import { ToastProvider } from '@/components/ui/toast-provider'
+import ThemeSync from '@/components/tryst/ThemeSync'
 import { publicConfig } from '@/lib/config'
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -21,6 +22,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     return (
         <GoogleOAuthProvider clientId={publicConfig.googleClientId}>
             <QueryClientProvider client={queryClient}>
+                <ThemeSync />
                 {children}
                 <ToastProvider />
             </QueryClientProvider>

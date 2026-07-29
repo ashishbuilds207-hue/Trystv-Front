@@ -42,7 +42,9 @@ export default function TonightView() {
     const unlockMut = useMutation({
         mutationFn: () => engagementApi.unlockVisitors(),
         onSuccess: ({ data }) => {
-            setVisitorsUnlocked(data.data.visitors)
+            setVisitorsUnlocked(
+                (data.data.visitors as { alias: string; avatarUrl?: string; city?: string }[]) || [],
+            )
             qc.invalidateQueries({ queryKey: ['engagement-home'] })
             toast.success('Visitors revealed', `${data.data.visitors.length} people viewed your profile`)
         },

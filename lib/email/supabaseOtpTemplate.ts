@@ -1,0 +1,29 @@
+/** Paste into Supabase → Authentication → Email Templates → Magic Link (or OTP)
+ *  Keep {{ .Token }} and {{ .ConfirmationURL }} — Supabase fills them in.
+ */
+export const SUPABASE_OTP_EMAIL_TEMPLATE = `<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#0a0a0a;font-family:Georgia,serif;">
+  <table width="100%" style="background:#0a0a0a;padding:40px 16px;">
+    <tr><td align="center">
+      <table width="100%" style="max-width:480px;background:#121212;border:1px solid #2a2a2a;border-radius:20px;">
+        <tr><td style="height:3px;background:linear-gradient(90deg,#C0392B,#D4AF37);"></td></tr>
+        <tr><td style="padding:36px 32px;text-align:center;">
+          <p style="margin:0;font-size:11px;letter-spacing:0.28em;color:#D4AF37;">TRYST</p>
+          <h1 style="margin:14px 0 0;font-size:28px;color:#F5F0E8;">Your secret code</h1>
+          <p style="margin:12px 0 0;font-size:14px;color:#9A9488;font-family:Arial,sans-serif;">
+            Enter this 6-digit code in the app. It expires shortly.
+          </p>
+          <p style="margin:28px 0;font-size:36px;letter-spacing:0.35em;font-weight:700;color:#C0392B;font-family:Arial,sans-serif;">
+            {{ .Token }}
+          </p>
+          <p style="margin:0;font-size:12px;color:#6B655C;font-family:Arial,sans-serif;">
+            Or <a href="{{ .ConfirmationURL }}" style="color:#D4AF37;">tap here to sign in</a>
+          </p>
+          <p style="margin:24px 0 0;font-style:italic;font-size:11px;color:#5A544C;">"Your Secret. Your Story."</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`

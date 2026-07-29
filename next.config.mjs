@@ -1,9 +1,5 @@
 /** @type {import('next').NextConfig} */
 
-const appUrl = process.env.NEXT_PUBLIC_APP_URL || ''
-const isLocalApp = /localhost|127\.0\.0\.1/.test(appUrl)
-const backendUrl = (process.env.BACKEND_URL || 'http://56.228.19.19').replace(/\/$/, '')
-
 const nextConfig = {
     images: {
         remotePatterns: [
@@ -25,9 +21,9 @@ const nextConfig = {
                 hostname: 'i.pravatar.cc',
             },
             {
-                protocol: 'http',
-                hostname: '56.228.19.19',
-                pathname: '/uploads/**',
+                protocol: 'https',
+                hostname: 'oilpchbgufjtbxhpzula.supabase.co',
+                pathname: '/storage/v1/object/public/**',
             },
         ],
     },
@@ -38,15 +34,6 @@ const nextConfig = {
             { source: '/apple-icon.svg', destination: '/apple-touch-icon.svg', permanent: false },
         ]
     },
-    // Live Amplify: proxy /api → EC2 (avoids HTTPS→HTTP mixed content in browser)
-    async rewrites() {
-        if (isLocalApp || process.env.NEXT_PUBLIC_API_URL) return []
-        return [
-            { source: '/api/:path*', destination: `${backendUrl}/api/:path*` },
-            { source: '/socket.io/:path*', destination: `${backendUrl}/socket.io/:path*` },
-            { source: '/uploads/:path*', destination: `${backendUrl}/uploads/:path*` },
-        ]
-    },
-};
+}
 
-export default nextConfig;
+export default nextConfig

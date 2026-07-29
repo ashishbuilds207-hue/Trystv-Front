@@ -3,16 +3,22 @@
 import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ChevronRight, Check, ArrowRight, User, Heart, Lock } from 'lucide-react'
+import { ChevronRight, Check, ArrowRight, User, Heart, Lock, Mail, MapPin, Navigation, Loader2 } from 'lucide-react'
 import { TrystLogo } from '@/components/tryst/TrystLogo'
 import { EmailField, isValidEmail } from '@/components/auth/EmailField'
-import { GoogleSignInButton, AuthDivider } from '@/components/auth/GoogleSignInButton'
-import { useGoogleAuthFlow, type GoogleUserData } from '@/lib/hooks/useGoogleAuthFlow'
+import { type GoogleUserData } from '@/lib/hooks/useGoogleAuthFlow'
 import { useRegister, useSendOtp, useVerifyOtp } from '@/lib/hooks/useAuth'
 import { formatOtpSendError, getApiErrorMessage } from '@/lib/api/errors'
 import { OtpErrorBanner } from '@/components/auth/OtpErrorBanner'
 import { OtpDeliveryBanner } from '@/components/auth/OtpSentBanner'
 import type { OtpDeliveryMode } from '@/components/auth/OtpSentBanner'
+import { createClient } from '@/lib/supabase/client'
+import {
+    detectGpsPlace,
+    resolveCityPlace,
+    suggestLocationPlaces,
+    type LocationSuggestion,
+} from '@/lib/geo/deviceLocation'
 
 type RelationshipStatus = 'married' | 'partnered' | 'open-relationship' | 'discreet-single'
 type DesireTag = 'Emotional Connection' | 'Adventure' | 'Conversation' | 'Physical' | 'Romance' | 'Travel' | 'Passion' | 'Discretion'
@@ -28,7 +34,6 @@ const relationshipOptions: { value: RelationshipStatus; label: string; desc: str
 
 export default function RegisterPage() {
     const router = useRouter()
-    const { googleLogin, loading: googleLoading } = useGoogleAuthFlow()
 
     const registerMutation = useRegister()
     const sendOtp = useSendOtp()
@@ -36,9 +41,13 @@ export default function RegisterPage() {
     const [step, setStep] = useState(1)
     const [otpStep, setOtpStep] = useState<'email' | 'otp'>('email')
     const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', ''])
-    const [otpSendError, setOtpSendError] = useState('')
+    const [sendError, setSendError] = useState('')
     const [otpDelivery, setOtpDelivery] = useState<OtpDeliveryMode>('email')
+    const [shownOtp, setShownOtp] = useState<string | null>(null)
+    const [otpEmailSent, setOtpEmailSent] = useState(false)
+    const [otpEmailError, setOtpEmailError] = useState<string | null>(null)
     const [googleSignup, setGoogleSignup] = useState<GoogleUserData | null>(null)
+    const [hasSession, setHasSession] = useState(false)
     const autoSendDone = useRef(false)
 
     const [form, setForm] = useState({
@@ -50,12 +59,42 @@ export default function RegisterPage() {
         desireTags: [] as DesireTag[],
         profession: '',
         city: '',
+        country: '',
+        latitude: null as number | null,
+        longitude: null as number | null,
     })
+    const [locStatus, setLocStatus] = useState<'idle' | 'asking' | 'gps' | 'manual' | 'error'>('idle')
+    const [locMessage, setLocMessage] = useState('')
+    const [locBusy, setLocBusy] = useState(false)
+    const [suggestions, setSuggestions] = useState<LocationSuggestion[]>([])
+    const [suggestOpen, setSuggestOpen] = useState(false)
+    const [suggestLoading, setSuggestLoading] = useState(false)
+    const gpsAsked = useRef(false)
+    const suggestTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const pickLock = useRef(false)
+    /** Keep last known GPS bias even if user clears/edits the field */
+    const geoBias = useRef<{
+        country: string | null
+        latitude: number | null
+        longitude: number | null
+    }>({ country: null, latitude: null, longitude: null })
 
-    // Pre-fill email from OTP login or Google signup redirect
+    // Pre-fill from login OTP / Google / existing session
     useEffect(() => {
         const params = new URLSearchParams(window.location.search)
-        if (params.get('source') === 'google') {
+        const source = params.get('source')
+
+        createClient().auth.getSession().then(({ data }) => {
+            if (data.session?.user) {
+                setHasSession(true)
+                setOtpStep('otp')
+                if (data.session.user.email) {
+                    setForm((p) => ({ ...p, email: data.session!.user.email! }))
+                }
+            }
+        })
+
+        if (source === 'google' || source === 'magic') {
             const raw = sessionStorage.getItem('tryst_google_data')
             if (raw) {
                 try {
@@ -63,16 +102,185 @@ export default function RegisterPage() {
                     setGoogleSignup(data)
                     setForm((p) => ({
                         ...p,
-                        email: data.email,
+                        email: data.email || p.email,
                         alias: p.alias || data.name?.split(' ')[0] || '',
                     }))
+                    setHasSession(true)
                 } catch { /* ignore */ }
             }
+            const savedEmail = sessionStorage.getItem('tryst_email')
+            if (savedEmail) setForm((p) => ({ ...p, email: savedEmail }))
             return
         }
         const saved = sessionStorage.getItem('tryst_email')
         if (saved) setForm((p) => ({ ...p, email: saved }))
     }, [])
+
+    /** Ask device GPS on Identity step and fill city from Google reverse-geocode. */
+    const applyGpsLocation = async () => {
+        setLocBusy(true)
+        setLocStatus('asking')
+        setLocMessage('Asking for your current location…')
+        const place = await detectGpsPlace()
+        if (place.source === 'gps' && (place.city || place.latitude != null)) {
+            const next = {
+                city: place.city || '',
+                country: place.country || '',
+                latitude: place.latitude,
+                longitude: place.longitude,
+            }
+            // Always write city into the field when we have a name
+            setForm((p) => ({
+                ...p,
+                city: next.city || p.city,
+                country: next.country || p.country,
+                latitude: next.latitude,
+                longitude: next.longitude,
+            }))
+            if (next.country || next.latitude != null) {
+                geoBias.current = {
+                    country: next.country || geoBias.current.country,
+                    latitude: next.latitude ?? geoBias.current.latitude,
+                    longitude: next.longitude ?? geoBias.current.longitude,
+                }
+            }
+            if (next.city) {
+                setLocStatus('gps')
+                setLocMessage(`Location set · ${next.city}${next.country ? `, ${next.country}` : ''}`)
+                try {
+                    sessionStorage.setItem('tryst_register_location_v2', JSON.stringify(next))
+                } catch { /* ignore */ }
+            } else {
+                setLocStatus('error')
+                setLocMessage('GPS found — type your city name to finish')
+            }
+        } else {
+            setLocStatus('error')
+            setLocMessage(place.error || 'Enter your city manually')
+        }
+        setLocBusy(false)
+    }
+
+    useEffect(() => {
+        if (step !== 1 || gpsAsked.current) return
+        gpsAsked.current = true
+        // Restore previous GPS fill if user refreshed mid-register
+        try {
+            const raw = sessionStorage.getItem('tryst_register_location_v2')
+            if (raw) {
+                const saved = JSON.parse(raw) as {
+                    city?: string; country?: string; latitude?: number | null; longitude?: number | null
+                }
+                if (saved.city && saved.latitude != null) {
+                    setForm((p) => ({
+                        ...p,
+                        city: saved.city || p.city,
+                        country: saved.country || p.country,
+                        latitude: saved.latitude ?? null,
+                        longitude: saved.longitude ?? null,
+                    }))
+                    geoBias.current = {
+                        country: saved.country || null,
+                        latitude: saved.latitude ?? null,
+                        longitude: saved.longitude ?? null,
+                    }
+                    setLocStatus('gps')
+                    setLocMessage(`Location set · ${saved.city}`)
+                    return
+                }
+            }
+            sessionStorage.removeItem('tryst_register_location')
+        } catch { /* ignore */ }
+        applyGpsLocation()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [step])
+
+    const onCityBlur = async () => {
+        // Let suggestion click finish first
+        setTimeout(() => setSuggestOpen(false), 150)
+        if (pickLock.current) return
+        const city = form.city.trim()
+        if (!city) return
+        if (locStatus === 'gps' && form.latitude != null) return
+        setLocBusy(true)
+        const place = await resolveCityPlace(city)
+        setForm((p) => ({
+            ...p,
+            city: place.city || city,
+            country: place.country || p.country,
+            latitude: place.latitude,
+            longitude: place.longitude,
+        }))
+        if (place.country || place.latitude != null) {
+            geoBias.current = {
+                country: place.country || geoBias.current.country,
+                latitude: place.latitude ?? geoBias.current.latitude,
+                longitude: place.longitude ?? geoBias.current.longitude,
+            }
+        }
+        setLocStatus('manual')
+        setSuggestions([])
+        setLocMessage(
+            place.latitude != null
+                ? `Location set · ${place.city || city}`
+                : `Using “${place.city || city}”`,
+        )
+        setLocBusy(false)
+    }
+
+    const fetchSuggestions = (query: string) => {
+        if (suggestTimer.current) clearTimeout(suggestTimer.current)
+        if (query.trim().length < 2) {
+            setSuggestions([])
+            setSuggestOpen(false)
+            setSuggestLoading(false)
+            return
+        }
+        setSuggestLoading(true)
+        suggestTimer.current = setTimeout(async () => {
+            const list = await suggestLocationPlaces({
+                query,
+                country: form.country || geoBias.current.country || 'India',
+                latitude: form.latitude ?? geoBias.current.latitude,
+                longitude: form.longitude ?? geoBias.current.longitude,
+            })
+            setSuggestions(list)
+            setSuggestOpen(list.length > 0)
+            setSuggestLoading(false)
+        }, 280)
+    }
+
+    const pickSuggestion = (s: LocationSuggestion) => {
+        pickLock.current = true
+        setForm((p) => ({
+            ...p,
+            city: s.label,
+            country: s.country || p.country,
+            latitude: s.latitude,
+            longitude: s.longitude,
+        }))
+        geoBias.current = {
+            country: s.country || geoBias.current.country,
+            latitude: s.latitude,
+            longitude: s.longitude,
+        }
+        setLocStatus('manual')
+        setLocMessage(`Location set · ${s.label}`)
+        setSuggestions([])
+        setSuggestOpen(false)
+        try {
+            sessionStorage.setItem(
+                'tryst_register_location_v2',
+                JSON.stringify({
+                    city: s.label,
+                    country: s.country,
+                    latitude: s.latitude,
+                    longitude: s.longitude,
+                }),
+            )
+        } catch { /* ignore */ }
+        setTimeout(() => { pickLock.current = false }, 300)
+    }
 
     const updateForm = (key: keyof typeof form, value: unknown) => setForm((p) => ({ ...p, [key]: value }))
 
@@ -85,7 +293,10 @@ export default function RegisterPage() {
         if (step === 1) return form.alias.length >= 2 && form.age && Number(form.age) >= 18
         if (step === 2) return form.gender !== '' && form.relationshipStatus !== ''
         if (step === 3) return form.desireTags.length >= 1
-        if (step === 4) return googleSignup ? true : otpStep === 'otp' && otpDigits.join('').length === 6
+        if (step === 4) {
+            if (googleSignup || hasSession) return true
+            return otpStep === 'otp' && otpDigits.join('').length === 6
+        }
         return false
     }
 
@@ -93,21 +304,35 @@ export default function RegisterPage() {
 
     const handleSendOtp = async () => {
         if (!isValidEmail(form.email)) return
-        setOtpSendError('')
+        setSendError('')
         try {
-            const res = await sendOtp.mutateAsync(registerEmail)
-            setOtpDelivery((res.data?.data?.otpMode as OtpDeliveryMode) || 'email')
+            sessionStorage.setItem('tryst_email', registerEmail)
+            const res = await sendOtp.mutateAsync({ email: registerEmail, purpose: 'register' })
+            const payload = res.data?.data as {
+                otpMode?: OtpDeliveryMode
+                otp?: string
+                emailSent?: boolean
+                emailError?: string | null
+            } | undefined
+            setOtpDelivery(payload?.otpMode || (payload?.otp ? 'onscreen' : 'email'))
+            setShownOtp(payload?.otp || null)
+            setOtpEmailSent(!!payload?.emailSent)
+            setOtpEmailError(payload?.emailError || null)
             setOtpStep('otp')
             setOtpDigits(['', '', '', '', '', ''])
+            // Prefill digits when OTP is shown on screen (dev / email blocked)
+            if (payload?.otp && payload.otp.length === 6) {
+                setOtpDigits(payload.otp.split(''))
+            }
         } catch (err) {
             setOtpStep('email')
-            setOtpSendError(formatOtpSendError(getApiErrorMessage(err, 'Could not send OTP. Please try again.')))
+            setSendError(formatOtpSendError(getApiErrorMessage(err, 'Could not send code.')))
         }
     }
 
     const handleEmailChange = (value: string) => {
         updateForm('email', value)
-        setOtpSendError('')
+        setSendError('')
         if (otpStep === 'otp') {
             setOtpStep('email')
             setOtpDigits(['', '', '', '', '', ''])
@@ -115,19 +340,21 @@ export default function RegisterPage() {
         }
     }
 
-    // Auto-send when arriving at step 4 with email from login redirect
     useEffect(() => {
-        if (step !== 4 || otpStep !== 'email' || !isValidEmail(form.email) || autoSendDone.current) return
+        if (step !== 4 || otpStep !== 'email' || hasSession || googleSignup) return
+        if (!isValidEmail(form.email) || autoSendDone.current) return
         const fromLogin = sessionStorage.getItem('tryst_email')
         if (!fromLogin) return
         autoSendDone.current = true
         handleSendOtp()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [step, form.email, otpStep])
+    }, [step, form.email, otpStep, hasSession, googleSignup])
 
     const handleOtpChange = (i: number, v: string) => {
         if (v.length > 1) return
-        const next = [...otpDigits]; next[i] = v; setOtpDigits(next)
+        const next = [...otpDigits]
+        next[i] = v.replace(/\D/g, '')
+        setOtpDigits(next)
         if (v && i < 5) document.getElementById(`rotp-${i + 1}`)?.focus()
     }
 
@@ -142,19 +369,31 @@ export default function RegisterPage() {
                 desireTags: form.desireTags,
                 profession: form.profession,
                 city: form.city,
-                ...(googleSignup ? { googleId: googleSignup.googleId, avatarUrl: googleSignup.avatar } : {}),
+                country: form.country || undefined,
+                latitude: form.latitude,
+                longitude: form.longitude,
+                ...(googleSignup ? { googleId: googleSignup.googleId, avatarUrl: googleSignup.avatar, freshStart: true } : {}),
             }
 
-            if (googleSignup) {
-                await registerMutation.mutateAsync(payload)
-            } else {
+            // If user typed a city but GPS failed earlier, resolve coords before save
+            if (payload.city && (payload.latitude == null || payload.longitude == null)) {
+                const place = await resolveCityPlace(payload.city)
+                payload.city = place.city || payload.city
+                payload.country = place.country || payload.country
+                payload.latitude = place.latitude
+                payload.longitude = place.longitude
+            }
+
+            if (!googleSignup && !hasSession) {
                 const { data } = await verifyOtp.mutateAsync({ email: registerEmail, otp: otpDigits.join('') })
                 if (!data.data) return
-                await registerMutation.mutateAsync(payload)
             }
+
+            await registerMutation.mutateAsync(payload)
 
             sessionStorage.removeItem('tryst_email')
             sessionStorage.removeItem('tryst_google_data')
+            sessionStorage.removeItem('tryst_pending_register')
             router.push('/onboarding')
         } catch {
             // toasts from hooks
@@ -201,17 +440,6 @@ export default function RegisterPage() {
                             <p className="text-ivory-500 text-sm">Your real name is never shown. Choose a name that feels like you.</p>
                         </div>
 
-                        {!googleSignup && (
-                            <div className="space-y-3">
-                                <GoogleSignInButton
-                                    onClick={googleLogin}
-                                    loading={googleLoading}
-                                    label="Sign up with Google"
-                                />
-                                <AuthDivider label="or continue with email" />
-                            </div>
-                        )}
-
                         {googleSignup && (
                             <div className="flex items-center gap-3 p-3 bg-tryst-bg border border-tryst-border rounded-xl">
                                 {googleSignup.avatar ? (
@@ -247,9 +475,129 @@ export default function RegisterPage() {
                                 placeholder="e.g. Doctor, Entrepreneur" className="tryst-input" />
                         </div>
                         <div>
-                            <label className="text-ivory-400 text-xs font-medium tracking-wider uppercase mb-2 block">City (optional)</label>
-                            <input type="text" value={form.city} onChange={(e) => updateForm('city', e.target.value)}
-                                placeholder="e.g. Mumbai, Dubai" className="tryst-input" />
+                            <div className="flex items-center justify-between mb-2">
+                                <label className="text-ivory-400 text-xs font-medium tracking-wider uppercase">
+                                    Your location
+                                </label>
+                                {form.latitude != null && form.city && (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-400">
+                                        <Check className="w-3 h-3" /> Location set
+                                    </span>
+                                )}
+                            </div>
+
+                            {(locStatus === 'asking' || (locBusy && !form.city)) && (
+                                <div className="mb-3 flex items-center gap-2 rounded-xl border border-crimson/20 bg-crimson/5 px-3 py-2.5 text-sm text-ivory-300">
+                                    <Loader2 className="w-4 h-4 animate-spin text-crimson-300 shrink-0" />
+                                    Detecting your current location…
+                                </div>
+                            )}
+
+                            {locStatus === 'gps' && form.city && (
+                                <div className="mb-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5">
+                                    <p className="text-emerald-300 text-sm font-medium flex items-center gap-2">
+                                        <MapPin className="w-4 h-4 shrink-0" />
+                                        {form.city}
+                                    </p>
+                                    <p className="text-emerald-500/80 text-[11px] mt-0.5 pl-6">
+                                        Autofilled from your device GPS
+                                    </p>
+                                </div>
+                            )}
+
+                            <div className="relative">
+                                <MapPin className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 z-10 ${
+                                    form.city && form.latitude != null ? 'text-emerald-400' : 'text-tryst-muted'
+                                }`} />
+                                <input
+                                    type="text"
+                                    value={form.city}
+                                    autoComplete="off"
+                                    onChange={(e) => {
+                                        const city = e.target.value
+                                        setForm((p) => ({
+                                            ...p,
+                                            city,
+                                            latitude: null,
+                                            longitude: null,
+                                        }))
+                                        setLocStatus('manual')
+                                        setLocMessage('Type to search places near you')
+                                        fetchSuggestions(city)
+                                    }}
+                                    onFocus={() => {
+                                        if (suggestions.length > 0) setSuggestOpen(true)
+                                        else if (form.city.trim().length >= 2) fetchSuggestions(form.city)
+                                    }}
+                                    onBlur={onCityBlur}
+                                    placeholder={locBusy ? 'Detecting…' : 'Type area, sector, or city'}
+                                    className={`tryst-input pl-10 pr-12 ${
+                                        form.city && form.latitude != null
+                                            ? 'border-emerald-500/40 focus:border-emerald-400'
+                                            : ''
+                                    }`}
+                                />
+                                <button
+                                    type="button"
+                                    title="Use current location"
+                                    disabled={locBusy}
+                                    onClick={applyGpsLocation}
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 z-10 p-1.5 rounded-lg text-crimson-300 hover:bg-crimson/10 disabled:opacity-50"
+                                >
+                                    {locBusy || suggestLoading
+                                        ? <Loader2 className="w-4 h-4 animate-spin" />
+                                        : <Navigation className="w-4 h-4" />}
+                                </button>
+
+                                {suggestOpen && suggestions.length > 0 && (
+                                    <ul className="absolute left-0 right-0 top-full mt-1 z-30 max-h-56 overflow-auto rounded-xl border border-tryst-border bg-tryst-card shadow-2xl">
+                                        {suggestions.map((s) => (
+                                            <li key={`${s.label}-${s.latitude}`}>
+                                                <button
+                                                    type="button"
+                                                    className="w-full text-left px-3 py-2.5 text-sm text-ivory-200 hover:bg-crimson/10 hover:text-crimson-200 flex items-start gap-2 transition-colors"
+                                                    onMouseDown={(e) => e.preventDefault()}
+                                                    onClick={() => pickSuggestion(s)}
+                                                >
+                                                    <MapPin className="w-3.5 h-3.5 mt-0.5 text-crimson-300 shrink-0" />
+                                                    <span>
+                                                        <span className="font-medium block">{s.label}</span>
+                                                        {s.country && (
+                                                            <span className="text-[11px] text-ivory-500">{s.country}</span>
+                                                        )}
+                                                    </span>
+                                                </button>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </div>
+
+                            <p className="text-[11px] text-ivory-600 mt-1.5">
+                                Optional — type to see places in {form.country || geoBias.current.country || 'your country'}
+                            </p>
+
+                            {locMessage && locStatus !== 'gps' && (
+                                <p className={`text-xs mt-1.5 flex items-center gap-1.5 ${
+                                    locStatus === 'error' ? 'text-gold-400' : 'text-ivory-500'
+                                }`}>
+                                    {locBusy
+                                        ? <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+                                        : <MapPin className="w-3 h-3 shrink-0" />}
+                                    {locMessage}
+                                </p>
+                            )}
+
+                            <button
+                                type="button"
+                                disabled={locBusy}
+                                onClick={applyGpsLocation}
+                                className="mt-2 w-full py-2.5 rounded-xl border border-tryst-border text-sm text-ivory-300 hover:border-crimson/40 hover:text-crimson-300 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                            >
+                                {locBusy
+                                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Getting GPS…</>
+                                    : <><Navigation className="w-4 h-4" /> {form.city ? 'Update from my location' : 'Use my current location'}</>}
+                            </button>
                         </div>
                     </div>
                 )}
@@ -323,25 +671,31 @@ export default function RegisterPage() {
                         <div>
                             <h2 className="font-playfair text-2xl font-bold text-ivory-100 mb-1">One last step.</h2>
                             <p className="text-ivory-500 text-sm">
-                                {googleSignup
-                                    ? 'Your Google account is verified. Review and begin your story.'
-                                    : 'Verify with your email. We\'ll send a private code — your address stays hidden on TRYST.'}
+                                {googleSignup || hasSession
+                                    ? 'You\'re verified. Review and begin your story.'
+                                    : 'We\'ll send a 6-digit code to your email.'}
                             </p>
                         </div>
 
-                        {googleSignup ? (
-                            <div className="flex items-center gap-3 p-4 bg-emerald-500/5 border border-emerald-500/20 rounded-xl">
-                                {googleSignup.avatar ? (
-                                    // eslint-disable-next-line @next/next/no-img-element
-                                    <img src={googleSignup.avatar} alt="" className="w-12 h-12 rounded-full" />
-                                ) : (
-                                    <div className="w-12 h-12 rounded-full bg-tryst-border" />
-                                )}
-                                <div>
-                                    <p className="text-ivory-200 text-sm font-medium">Signed in with Google</p>
-                                    <p className="text-ivory-500 text-xs">{googleSignup.email}</p>
+                        {googleSignup || hasSession ? (
+                            <>
+                                <div className="flex items-center gap-3 p-4 bg-emerald-500/5 border border-emerald-500/20 rounded-xl">
+                                    {googleSignup?.avatar ? (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img src={googleSignup.avatar} alt="" className="w-12 h-12 rounded-full" />
+                                    ) : (
+                                        <div className="w-12 h-12 rounded-full bg-crimson/10 border border-crimson/20 flex items-center justify-center">
+                                            <Mail className="w-5 h-5 text-crimson" />
+                                        </div>
+                                    )}
+                                    <div>
+                                        <p className="text-ivory-200 text-sm font-medium">
+                                            {googleSignup ? 'Signed in with Google' : 'Email verified'}
+                                        </p>
+                                        <p className="text-ivory-500 text-xs">{registerEmail}</p>
+                                    </div>
                                 </div>
-                            </div>
+                            </>
                         ) : otpStep === 'email' ? (
                             <div className="space-y-4">
                                 <EmailField
@@ -350,8 +704,8 @@ export default function RegisterPage() {
                                     id="register-email"
                                     hint="Never shown on your profile"
                                 />
-                                {otpSendError && (
-                                    <OtpErrorBanner message={otpSendError} onDismiss={() => setOtpSendError('')} />
+                                {sendError && (
+                                    <OtpErrorBanner message={sendError} onDismiss={() => setSendError('')} />
                                 )}
                                 <button onClick={handleSendOtp} disabled={!isValidEmail(form.email) || sendOtp.isPending}
                                     className="tryst-button-primary w-full flex items-center justify-center gap-2 disabled:opacity-50">
@@ -360,39 +714,58 @@ export default function RegisterPage() {
                             </div>
                         ) : (
                             <div className="space-y-4">
-                                <p className="text-ivory-400 text-sm">
-                                    Enter the 6-digit code we sent to your email.
-                                </p>
-                                <OtpDeliveryBanner email={registerEmail} mode={otpDelivery} />
+                                <OtpDeliveryBanner
+                                    email={registerEmail}
+                                    mode={otpDelivery}
+                                    otp={shownOtp}
+                                    emailSent={otpEmailSent}
+                                    emailError={otpEmailError}
+                                />
                                 <div className="flex gap-2 justify-between">
                                     {otpDigits.map((d, i) => (
-                                        <input key={i} id={`rotp-${i}`} type="text" inputMode="numeric" value={d}
+                                        <input
+                                            key={i}
+                                            id={`rotp-${i}`}
+                                            type="text"
+                                            inputMode="numeric"
+                                            value={d}
                                             onChange={(e) => handleOtpChange(i, e.target.value)}
-                                            onKeyDown={(e) => { if (e.key === 'Backspace' && !d && i > 0) document.getElementById(`rotp-${i - 1}`)?.focus() }}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Backspace' && !d && i > 0) {
+                                                    document.getElementById(`rotp-${i - 1}`)?.focus()
+                                                }
+                                            }}
                                             maxLength={1}
                                             className="w-12 h-14 text-center text-ivory-100 text-xl font-bold bg-tryst-card border border-tryst-border rounded-xl outline-none focus:border-crimson focus:shadow-[0_0_0_3px_rgba(192,57,43,0.15)] transition-all"
                                         />
                                     ))}
                                 </div>
-                                {otpSendError && (
-                                    <OtpErrorBanner message={otpSendError} onDismiss={() => setOtpSendError('')} />
+                                {sendError && (
+                                    <OtpErrorBanner message={sendError} onDismiss={() => setSendError('')} />
                                 )}
-                                <button onClick={() => { setOtpStep('email'); setOtpDigits(['','','','','','']); autoSendDone.current = false; setOtpSendError('') }}
-                                    className="text-ivory-500 text-xs hover:text-ivory-300 transition-colors">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setOtpStep('email')
+                                        setOtpDigits(['', '', '', '', '', ''])
+                                        autoSendDone.current = false
+                                        setSendError('')
+                                    }}
+                                    className="text-ivory-500 text-xs hover:text-ivory-300 transition-colors"
+                                >
                                     ← Change email
                                 </button>
                                 <button
                                     type="button"
                                     onClick={handleSendOtp}
                                     disabled={sendOtp.isPending}
-                                    className="text-crimson-400 text-xs hover:text-crimson-300 transition-colors disabled:opacity-50"
+                                    className="block text-crimson-400 text-xs hover:text-crimson-300 transition-colors disabled:opacity-50"
                                 >
-                                    {sendOtp.isPending ? 'Sending…' : 'Resend OTP'}
+                                    {sendOtp.isPending ? 'Sending…' : 'Resend code'}
                                 </button>
                             </div>
                         )}
 
-                        {/* Summary */}
                         <div className="bg-tryst-card border border-tryst-border rounded-xl p-4 space-y-2">
                             <p className="text-ivory-400 text-xs font-medium tracking-wider uppercase mb-3">Your Profile Preview</p>
                             {[['Alias', form.alias],['Age', form.age],['Status', form.relationshipStatus?.replace(/-/g,' ')],['Desires', `${form.desireTags.length} selected`]].map(([k, v]) => (
@@ -418,7 +791,7 @@ export default function RegisterPage() {
                             Back
                         </button>
                     )}
-                    {(step < 4 || (step === 4 && (googleSignup || otpStep === 'otp'))) && (
+                    {(step < 4 || (step === 4 && (googleSignup || hasSession || otpStep === 'otp'))) && (
                         <button onClick={handleNext} disabled={!canProceed() || loading}
                             className="flex-1 tryst-button-primary flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
                             {loading ? <div className="loading-spinner" /> : step < 4 ? <>Continue <ChevronRight className="w-4 h-4" /></> : <>Begin My Story <ArrowRight className="w-4 h-4" /></>}

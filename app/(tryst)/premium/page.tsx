@@ -1,7 +1,9 @@
 'use client'
 
 import { useState } from 'react'
-import { Crown, Diamond, Zap, CheckCircle2, ArrowRight, Sparkles, Ghost, Eye, Lock, Timer, MapPin, Star } from 'lucide-react'
+import { Crown, Diamond, Zap, CheckCircle2, ArrowRight, Sparkles, Ghost, Eye, Lock, Timer, MapPin, Star, Loader2 } from 'lucide-react'
+import { useRazorpayCheckout } from '@/lib/hooks/useRazorpayCheckout'
+import { useAuthUser } from '@/lib/hooks/useAuth'
 
 const plans = [
     {
@@ -53,7 +55,7 @@ const plans = [
         icon: <Diamond className="w-6 h-6" />,
         name: 'TRYST Obsidian',
         tagline: 'Ultimate Discretion',
-        priceMonthly: 2499,
+        priceMonthly: 4999,
         color: 'border-ivory-600/30',
         headerBg: 'bg-tryst-card-2',
         buttonStyle: 'border border-ivory-500/40 text-ivory-200 hover:bg-ivory-500/5',
@@ -74,6 +76,27 @@ const plans = [
 export default function GoldPage() {
     const [annual, setAnnual] = useState(false)
     const [selected, setSelected] = useState('gold')
+    const { checkout, loadingPlan } = useRazorpayCheckout()
+    const { data: me } = useAuthUser()
+
+    const planKey = (id: string) => {
+        if (id === 'gold') return annual ? 'gold_annual' : 'gold_monthly'
+        if (id === 'obsidian') return 'obsidian'
+        return null
+    }
+
+    const handleUpgrade = async (id: string) => {
+        const key = planKey(id)
+        if (!key) return
+        await checkout(key)
+    }
+
+    const isCurrentPlan = (id: string) => {
+        if (id === 'free') return !me?.isGold && !me?.isObsidian
+        if (id === 'gold') return me?.isGold && !me?.isObsidian
+        if (id === 'obsidian') return me?.isObsidian
+        return false
+    }
 
     return (
         <div className="page-content py-8 pb-24 page-transition">
@@ -127,8 +150,21 @@ export default function GoldPage() {
                                     <span className={f.included ? 'text-ivory-300' : 'text-ivory-600 line-through'}>{f.text}</span>
                                 </div>
                             ))}
-                            <button className={`w-full mt-4 py-3 rounded-xl text-sm transition-all ${plan.buttonStyle}`}>
-                                {plan.id === 'free' ? 'Current plan' : `Get ${plan.name}`}
+                            <button
+                                type="button"
+                                disabled={plan.id === 'free' || isCurrentPlan(plan.id) || loadingPlan !== null}
+                                onClick={(e) => {
+                                    e.stopPropagation()
+                                    if (plan.id !== 'free') void handleUpgrade(plan.id)
+                                }}
+                                className={`w-full mt-4 py-3 rounded-xl text-sm transition-all flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed ${plan.buttonStyle}`}
+                            >
+                                {loadingPlan === planKey(plan.id) && <Loader2 className="w-4 h-4 animate-spin" />}
+                                {plan.id === 'free'
+                                    ? 'Current plan'
+                                    : isCurrentPlan(plan.id)
+                                        ? 'Active plan'
+                                        : `Get ${plan.name}`}
                             </button>
                         </div>
                     </div>

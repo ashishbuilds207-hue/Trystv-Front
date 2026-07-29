@@ -75,7 +75,11 @@ export default function ProfilePhotoUpload({ photos, avatarUrl, onUpdate }: Prop
         try {
             await userApi.setAvatarPhoto(index)
             qc.invalidateQueries({ queryKey: ['profile', 'me'] })
-            toast.success('Main photo updated')
+            qc.invalidateQueries({ queryKey: ['me'] })
+            qc.invalidateQueries({ queryKey: ['profile-completion'] })
+            qc.invalidateQueries({ queryKey: ['orbit-feed'] })
+            onUpdate?.()
+            toast.success('Main photo updated', 'Everyone will now see this photo')
         } catch {
             toast.error('Could not set main photo')
         }
@@ -84,8 +88,8 @@ export default function ProfilePhotoUpload({ photos, avatarUrl, onUpdate }: Prop
     return (
         <div>
             <div className="flex items-center justify-between mb-3">
-                <p className="font-mono text-[9px] tracking-[0.22em] uppercase text-gold-400">Your Photos</p>
-                <span className="text-xs text-ivory-500">{photos.length}/{MAX_PHOTOS}</span>
+                <p className="you-section-label mb-0">Your Photos</p>
+                <span className="text-xs text-tryst-muted">{photos.length}/{MAX_PHOTOS}</span>
             </div>
 
             <div className="grid grid-cols-3 gap-2">
@@ -114,7 +118,7 @@ export default function ProfilePhotoUpload({ photos, avatarUrl, onUpdate }: Prop
                             </>
                         ) : i === photos.length && canAdd ? (
                             <button onClick={() => inputRef.current?.click()} disabled={uploading}
-                                className="w-full h-full flex flex-col items-center justify-center gap-1.5 text-ivory-500 hover:text-gold-400 hover:border-gold/30 transition-colors">
+                                className="w-full h-full flex flex-col items-center justify-center gap-1.5 text-tryst-muted hover:text-crimson hover:border-crimson/30 transition-colors">
                                 {uploading ? <Loader2 className="w-6 h-6 animate-spin text-crimson" /> : (
                                     <>
                                         <Plus className="w-6 h-6" />
@@ -124,7 +128,7 @@ export default function ProfilePhotoUpload({ photos, avatarUrl, onUpdate }: Prop
                             </button>
                         ) : (
                             <div className="w-full h-full flex items-center justify-center opacity-20">
-                                <Camera className="w-6 h-6 text-ivory-600" />
+                                <Camera className="w-6 h-6 text-tryst-muted" />
                             </div>
                         )}
                     </div>

@@ -12,6 +12,8 @@ interface AppState {
     isPanicMode: boolean
     activeTab: 'tonight' | 'orbits' | 'pulse' | 'chat' | 'you'
     isNightMode: boolean
+    orbitAvatarMode: boolean
+    orbitGuideOpen: boolean
     disguiseModeEnabled: boolean
     activeDisguiseSkin: string
     hasSeenDisguiseIntro: boolean
@@ -24,6 +26,8 @@ interface AppState {
     setCurrentUser: (id: string, token: string) => void
     toggleGhostMode: () => void
     toggleNightMode: () => void
+    toggleOrbitAvatarMode: () => void
+    setOrbitGuideOpen: (open: boolean) => void
     setDisguise: (enabled: boolean, skin?: string) => void
     markDisguiseIntroSeen: () => void
     markDisguiseActiveCoachSeen: () => void
@@ -44,7 +48,9 @@ export const useAppStore = create<AppState>()(
             isGhostMode: false,
             isPanicMode: false,
             activeTab: 'tonight',
-            isNightMode: false,
+            isNightMode: true,
+            orbitAvatarMode: false,
+            orbitGuideOpen: false,
             disguiseModeEnabled: false,
             activeDisguiseSkin: 'newspaper',
             hasSeenDisguiseIntro: false,
@@ -63,6 +69,10 @@ export const useAppStore = create<AppState>()(
             toggleGhostMode: () => set((s) => ({ isGhostMode: !s.isGhostMode })),
 
             toggleNightMode: () => set((s) => ({ isNightMode: !s.isNightMode })),
+
+            toggleOrbitAvatarMode: () => set((s) => ({ orbitAvatarMode: !s.orbitAvatarMode })),
+
+            setOrbitGuideOpen: (open) => set({ orbitGuideOpen: open }),
 
             setDisguise: (enabled, skin) => set((s) => ({
                 disguiseModeEnabled: enabled,
@@ -99,6 +109,8 @@ export const useAppStore = create<AppState>()(
                 currentUserId: s.currentUserId,
                 isGhostMode: s.isGhostMode,
                 isNightMode: s.isNightMode,
+                orbitAvatarMode: s.orbitAvatarMode,
+                orbitGuideOpen: s.orbitGuideOpen,
                 disguiseModeEnabled: s.disguiseModeEnabled,
                 activeDisguiseSkin: s.activeDisguiseSkin,
                 hasSeenDisguiseIntro: s.hasSeenDisguiseIntro,

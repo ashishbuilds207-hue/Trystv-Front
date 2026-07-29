@@ -4,7 +4,7 @@ import { useState, useCallback } from 'react'
 import Link from 'next/link'
 import {
     Edit3, Shield, Crown, ChevronRight, LogOut, Loader2,
-    Moon, Eye, EyeOff, Newspaper, User, Check, Instagram, LayoutGrid,
+    Moon, Sun, Eye, EyeOff, Newspaper, User, Check, Instagram, LayoutGrid,
 } from 'lucide-react'
 import { useAppStore } from '@/lib/store/useAppStore'
 import { useSignOut, useAuthUser } from '@/lib/hooks/useAuth'
@@ -17,6 +17,7 @@ import ProfilePhotoUpload from '@/components/tryst/ProfilePhotoUpload'
 import ProfileCompletionRing from '@/components/tryst/ProfileCompletionRing'
 import { DISGUISE_SKIN_META } from '@/components/tryst/disguise/skinMeta'
 import DisguisePickerModal from '@/components/tryst/disguise/DisguisePickerModal'
+import { AccountActions } from '@/components/tryst/AccountActions'
 import type { DisguiseSkinId } from '@/components/tryst/disguise/skins'
 import { scrollAppToTop } from '@/lib/scroll'
 
@@ -28,8 +29,16 @@ const ARCHETYPES: Record<string, { name: string; glyph: string }> = {
     STORY: { name: 'Story', glyph: '📖' },
 }
 
+function ToggleSwitch({ on }: { on: boolean }) {
+    return (
+        <div className={`tryst-toggle ${on ? 'tryst-toggle--on' : 'tryst-toggle--off'}`}>
+            <div className={`tryst-toggle-knob ${on ? 'tryst-toggle-knob--on' : 'tryst-toggle-knob--off'}`} />
+        </div>
+    )
+}
+
 export default function YouPage() {
-    const { isGhostMode, toggleGhostMode, isNightMode, toggleNightMode, disguiseModeEnabled, setDisguise } = useAppStore()
+    const { isNightMode, toggleNightMode, disguiseModeEnabled, setDisguise } = useAppStore()
     const signOut = useSignOut()
     const toast = useToast()
     const qc = useQueryClient()
@@ -93,14 +102,6 @@ export default function YouPage() {
         requestAnimationFrame(() => setShowDisguise(true))
     }, [])
 
-    const exitDisguise = async () => {
-        setDisguise(false)
-        try {
-            await userApi.updateProfile({ disguiseModeEnabled: false })
-            toast.info('Disguise off', 'Welcome back to TRYST')
-        } catch { /* local state already cleared */ }
-    }
-
     if (isLoading) return (
         <div className="min-h-[60vh] flex items-center justify-center">
             <Loader2 className="w-8 h-8 text-crimson animate-spin" />
@@ -112,26 +113,26 @@ export default function YouPage() {
             <div className="flex items-center gap-4 py-6">
                 <ProfileAvatar seed={me?.alias || 'You'} src={me?.avatarUrl} size={74} className="border-2 border-crimson shadow-crimson" />
                 <div className="flex-1">
-                    <h1 className="font-playfair text-2xl font-bold text-[#1a1815]">{me?.alias}</h1>
-                    <p className="text-[#777] text-xs mt-1">
+                    <h1 className="font-playfair text-2xl font-bold text-tryst-text">{me?.alias}</h1>
+                    <p className="text-tryst-muted text-xs mt-1">
                         {[me?.age, me?.profession, me?.city].filter(Boolean).join(' · ')}
                     </p>
                     <span className="inline-flex items-center gap-1 mt-2 px-2.5 py-1 rounded-full bg-gold/10 border border-gold/30 text-gold-400 text-[10px]">
                         {arch.glyph} {arch.name}
                     </span>
                 </div>
-                <Link href="/onboarding" className="w-9 h-9 rounded-full border border-tryst-border flex items-center justify-center text-ivory-500 hover:text-ivory-200">
+                <Link href="/onboarding" className="w-9 h-9 rounded-full border border-tryst-border flex items-center justify-center text-tryst-muted hover:text-tryst-text transition-colors">
                     <Edit3 className="w-4 h-4" />
                 </Link>
             </div>
 
-            <Link href="/onboarding" className="you-card p-4 mb-4 flex items-center gap-3 hover:border-crimson/20 transition-colors">
-                <User className="w-5 h-5 text-crimson-400" />
+            <Link href="/onboarding" className="you-card you-row p-4 mb-4 flex items-center gap-3 hover:border-crimson/20 transition-colors">
+                <User className="w-5 h-5 you-icon" />
                 <div className="flex-1">
-                    <p className="text-[#1a1815] text-sm font-medium">Edit profile</p>
-                    <p className="text-[#777] text-xs">Alias, bio, basics, photos & who you&apos;re looking for</p>
+                    <p className="you-ink text-sm font-medium">Edit profile</p>
+                    <p className="you-muted text-xs">Alias, bio, basics, photos & who you&apos;re looking for</p>
                 </div>
-                <ChevronRight className="w-4 h-4 text-[#999]" />
+                <ChevronRight className="w-4 h-4 you-subtle" />
             </Link>
 
             <ProfileCompletionRing />
@@ -145,7 +146,7 @@ export default function YouPage() {
                     <Crown className="w-6 h-6 text-gold-400" />
                     <div className="flex-1">
                         <p className="font-playfair text-gold-400">TRYST Gold</p>
-                        <p className="text-ivory-500 text-xs">Active subscription</p>
+                        <p className="text-tryst-muted text-xs">Active subscription</p>
                     </div>
                 </div>
             ) : (
@@ -153,22 +154,22 @@ export default function YouPage() {
                     <Crown className="w-6 h-6 text-gold-400" />
                     <div className="flex-1">
                         <p className="font-playfair text-gold-400">Upgrade to Gold</p>
-                        <p className="text-ivory-500 text-xs">From ₹499/mo · billed discreetly</p>
+                        <p className="text-tryst-muted text-xs">From ₹499/mo · billed discreetly</p>
                     </div>
                     <ChevronRight className="w-5 h-5 text-gold-400" />
                 </Link>
             )}
 
-            <p className="font-mono text-[9px] tracking-[0.22em] uppercase text-[#888] mb-2 px-1">Looking for</p>
-            <Link href="/onboarding" className="you-card p-4 mb-5 flex items-center gap-3">
-                <User className="w-5 h-5 text-[#9a3b2e]" />
-                <span className="text-[#333] text-sm flex-1">
+            <p className="you-section-label">Looking for</p>
+            <Link href="/onboarding" className="you-card you-row p-4 mb-5 flex items-center gap-3">
+                <User className="w-5 h-5 you-icon" />
+                <span className="you-ink text-sm flex-1">
                     {me?.seeking || 'Everyone'} · {me?.agePrefMin || 18}–{me?.agePrefMax || 50} · {(me?.maxDistanceKm || 50) >= 100 ? 'Worldwide' : `${me?.maxDistanceKm || 50} km`}
                 </span>
-                <Edit3 className="w-4 h-4 text-[#999]" />
+                <Edit3 className="w-4 h-4 you-subtle" />
             </Link>
 
-            <p className="font-mono text-[9px] tracking-[0.22em] uppercase text-[#888] mb-2 px-1">Privacy</p>
+            <p className="you-section-label">Privacy</p>
             <div className="you-card overflow-hidden mb-5">
                 {[
                     { key: 'blur', icon: Eye, title: 'Blur photos by default', sub: 'Only 2 photos clear' },
@@ -177,79 +178,83 @@ export default function YouPage() {
                     { key: 'readReceipts', icon: Check, title: 'Read receipts', sub: 'Gold privacy control' },
                 ].map((row, i, arr) => (
                     <button key={row.key} onClick={() => savePrivacy(row.key, !priv[row.key as keyof typeof priv])}
-                        className={`w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-black/[0.02] transition-colors ${i < arr.length - 1 ? 'border-b border-[#e8e0d4]' : ''}`}>
-                        <row.icon className={`w-5 h-5 ${priv[row.key as keyof typeof priv] ? 'text-[#9a3b2e]' : 'text-[#aaa]'}`} />
+                        disabled={saving}
+                        className={`you-row w-full flex items-center gap-3 px-4 py-3.5 text-left ${i < arr.length - 1 ? 'border-b you-divider' : ''}`}>
+                        <row.icon className={`w-5 h-5 ${priv[row.key as keyof typeof priv] ? 'you-icon' : 'you-subtle'}`} />
                         <div className="flex-1">
-                            <p className="text-[#1a1815] text-sm">{row.title}</p>
-                            <p className="text-[#888] text-xs">{row.sub}</p>
+                            <p className="you-ink text-sm">{row.title}</p>
+                            <p className="you-muted text-xs">{row.sub}</p>
                         </div>
-                        <div className={`w-10 h-5 rounded-full transition-colors ${priv[row.key as keyof typeof priv] ? 'bg-[#9a3b2e]/70' : 'bg-[#ddd]'}`}>
-                            <div className={`w-4 h-4 bg-white rounded-full mt-0.5 transition-transform ${priv[row.key as keyof typeof priv] ? 'translate-x-5' : 'translate-x-0.5'}`} />
-                        </div>
+                        <ToggleSwitch on={priv[row.key as keyof typeof priv]} />
                     </button>
                 ))}
             </div>
 
-            <p className="font-mono text-[9px] tracking-[0.22em] uppercase text-[#888] mb-2 px-1">Discretion</p>
+            <p className="you-section-label">Discretion</p>
             <div className="you-card overflow-hidden mb-5">
                 <button onClick={openDisguisePicker}
-                    className="w-full flex items-center gap-3 px-4 py-3.5 border-b border-[#e8e0d4] hover:bg-black/[0.02]">
-                    <Newspaper className="w-5 h-5 text-[#9a3b2e]" />
+                    className="you-row w-full flex items-center gap-3 px-4 py-3.5 border-b you-divider">
+                    <Newspaper className="w-5 h-5 you-icon" />
                     <div className="flex-1 text-left">
-                        <p className="text-[#1a1815] text-sm">Disguise Mode</p>
-                        <p className="text-[#888] text-xs">
+                        <p className="you-ink text-sm">Disguise Mode</p>
+                        <p className="you-muted text-xs">
                             {disguiseModeEnabled
                                 ? `${DISGUISE_SKIN_META.find(s => s.id === me?.activeDisguiseSkin)?.appName || 'The Morning Herald'} · active`
                                 : 'Editorial newspaper, budget dashboard, meditation & more'}
                         </p>
                     </div>
-                    <ChevronRight className="w-4 h-4 text-[#999]" />
+                    <ChevronRight className="w-4 h-4 you-subtle" />
                 </button>
                 <button onClick={toggleNightMode}
-                    className="w-full flex items-center gap-3 px-4 py-3.5 border-b border-[#e8e0d4] hover:bg-black/[0.02]">
-                    <Moon className="w-5 h-5 text-[#9a3b2e]" />
+                    className="you-row w-full flex items-center gap-3 px-4 py-3.5 border-b you-divider">
+                    {isNightMode ? <Moon className="w-5 h-5 you-icon" /> : <Sun className="w-5 h-5 you-icon" />}
                     <div className="flex-1 text-left">
-                        <p className="text-[#1a1815] text-sm">Night Mode</p>
-                        <p className="text-[#888] text-xs">The dramatic dark TRYST</p>
+                        <p className="you-ink text-sm font-medium">{isNightMode ? 'Dark mode' : 'Light mode'}</p>
+                        <p className="you-muted text-xs">
+                            {isNightMode ? 'Deep brown TRYST · cream accent cards' : 'Warm cream paper · brown accents'}
+                        </p>
                     </div>
-                    <div className={`w-10 h-5 rounded-full ${isNightMode ? 'bg-[#9a3b2e]/70' : 'bg-[#ddd]'}`}>
-                        <div className={`w-4 h-4 bg-white rounded-full mt-0.5 transition-transform ${isNightMode ? 'translate-x-5' : 'translate-x-0.5'}`} />
-                    </div>
+                    <ToggleSwitch on={isNightMode} />
                 </button>
                 <button onClick={() => setShowIcons(!showIcons)}
-                    className="w-full flex items-center gap-3 px-4 py-3.5 border-b border-[#e8e0d4] hover:bg-black/[0.02]">
-                    <LayoutGrid className="w-5 h-5 text-[#9a3b2e]" />
+                    className="you-row w-full flex items-center gap-3 px-4 py-3.5 border-b you-divider">
+                    <LayoutGrid className="w-5 h-5 you-icon" />
                     <div className="flex-1 text-left">
-                        <p className="text-[#1a1815] text-sm">App icon</p>
-                        <p className="text-[#888] text-xs">Choose an innocent-looking launcher icon</p>
+                        <p className="you-ink text-sm">App icon</p>
+                        <p className="you-muted text-xs">Choose an innocent-looking launcher icon</p>
                     </div>
                     <span className="text-lg">{APP_ICONS.find(i => i.id === appIcon)?.emoji}</span>
                 </button>
                 {showIcons && (
-                    <div className="grid grid-cols-3 gap-2 p-4 border-b border-[#e8e0d4]">
+                    <div className="grid grid-cols-3 gap-2 p-4 border-b you-divider">
                         {APP_ICONS.map(icon => (
                             <button key={icon.id} onClick={() => { setAppIcon(icon.id); localStorage.setItem('tryst_app_icon', icon.id) }}
-                                className={`p-3 rounded-xl border text-center ${appIcon === icon.id ? 'border-[#9a3b2e] bg-[#9a3b2e]/5' : 'border-[#e8e0d4]'}`}>
+                                className={`p-3 rounded-xl border text-center transition-colors ${appIcon === icon.id ? 'you-chip--selected' : 'you-divider border'}`}>
                                 <span className="text-2xl block mb-1">{icon.emoji}</span>
-                                <span className="text-[10px] text-[#666]">{icon.label}</span>
+                                <span className="text-[10px] you-muted">{icon.label}</span>
                             </button>
                         ))}
                     </div>
                 )}
                 <div className="w-full flex items-center gap-3 px-4 py-3.5">
-                    <Instagram className="w-5 h-5 text-[#9a3b2e]" />
+                    <Instagram className="w-5 h-5 you-icon" />
                     <div className="flex-1 text-left">
-                        <p className="text-[#1a1815] text-sm">Connected accounts</p>
-                        <p className="text-[#888] text-xs">Interest signal only · token discarded</p>
+                        <p className="you-ink text-sm">Connected accounts</p>
+                        <p className="you-muted text-xs">Interest signal only · token discarded</p>
                     </div>
-                    <button className="px-3 py-1 rounded-full border border-[#9a3b2e] text-[#9a3b2e] text-xs font-medium">CONNECT</button>
+                    <button className="px-3 py-1 rounded-full border you-chip text-xs font-medium">CONNECT</button>
                 </div>
             </div>
 
-            <p className="text-center text-[10px] tracking-[0.2em] uppercase text-[#aaa] mb-4">TRYST · YOUR SECRET. YOUR STORY.</p>
+            <p className="you-footer-tagline">TRYST · YOUR SECRET. YOUR STORY.</p>
+
+            <p className="you-section-label mt-6">Account & billing</p>
+            <div className="you-card overflow-hidden mb-4">
+                <AccountActions />
+            </div>
 
             <button onClick={signOut}
-                className="w-full flex items-center gap-3 px-4 py-3.5 tryst-card text-ivory-500 hover:text-ivory-300 transition-colors">
+                className="w-full flex items-center gap-3 px-4 py-3.5 tryst-card text-tryst-muted hover:text-tryst-text transition-colors">
                 <LogOut className="w-4 h-4" />
                 <span className="text-sm">Sign out discreetly</span>
             </button>

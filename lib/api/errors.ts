@@ -1,24 +1,33 @@
-import { AxiosError } from 'axios'
+import { ApiError } from '@/lib/supabase/mappers'
 
-type ApiErrorBody = { message?: string; success?: boolean }
-
-export function getApiErrorMessage(err: unknown, fallback = 'Please try again.'): string {
-    if (err instanceof AxiosError) {
-        const data = err.response?.data as ApiErrorBody | string | undefined
-        if (typeof data === 'string' && data.trim()) return data
-        if (data && typeof data === 'object' && data.message) return data.message
+export function getApiErrorMessage(e: unknown, fallback = 'Something went wrong') {
+    if (e instanceof ApiError) return e.response.data.message || fallback
+    if (e && typeof e === 'object' && 'response' in e) {
+        const r = (e as { response?: { data?: { message?: string } } }).response
+        if (r?.data?.message) return r.data.message
     }
-    if (err instanceof Error && err.message) return err.message
+    if (e instanceof Error && e.message) return e.message
     return fallback
 }
 
-/** Shorter copy for OTP failures shown in the form */
-export function formatOtpSendError(message: string): string {
-    if (/sendgrid|email service|verification email/i.test(message)) {
-        return 'Could not send the verification email. Check the address and try again, or look in spam.'
+export function formatOtpSendError(msg: string) {
+    if (/already exists|try a new email|EMAIL_EXISTS/i.test(msg)) {
+        return 'Email already exists — try a new email'
     }
-    if (/not configured|not installed/i.test(message)) {
-        return 'Email verification is temporarily unavailable. Please try again later.'
+    if (/over_email_send_rate_limit|email rate limit|rate limit exceeded/i.test(msg)) {
+        return 'Email rate limit exceeded — wait 2–3 minutes, then try once more.'
     }
-    return message
+    if (/Please wait ~45s/i.test(msg)) {
+        return msg
+    }
+    if (/rate|limit|too many/i.test(msg)) {
+        return 'Too many requests. Wait a minute and try again.'
+    }
+    if (/resend|domain|only send testing|not authorized/i.test(msg)) {
+        return msg
+    }
+    if (/smtp|email|send|magic/i.test(msg) && !/already|exists|rate/i.test(msg)) {
+        return 'Could not send email. Check Resend / email settings, then try again.'
+    }
+    return msg
 }

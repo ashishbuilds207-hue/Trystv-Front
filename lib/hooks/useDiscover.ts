@@ -1,8 +1,12 @@
 'use client'
 
+import { useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from '@tanstack/react-query'
 import { userApi, matchApi, messageApi } from '@/lib/api/auth'
 import { useToast } from './useToast'
+import { usePresenceStore } from '@/lib/store/usePresenceStore'
+import { useAppStore } from '@/lib/store/useAppStore'
+import { withLiveOnline } from './usePresence'
 
 export function useDiscoverProfiles() {
     return useInfiniteQuery({
@@ -24,6 +28,7 @@ export function useSwipe() {
         mutationFn: ({ targetId, direction }: { targetId: string; direction: 'like' | 'pass' | 'super' }) =>
             matchApi.swipe(targetId, direction),
         onSuccess: ({ data }) => {
+            qc.invalidateQueries({ queryKey: ['likes'] })
             if (data.data.matched) {
                 qc.invalidateQueries({ queryKey: ['matches'] })
             }
@@ -31,8 +36,33 @@ export function useSwipe() {
     })
 }
 
+export function useLikes() {
+    const onlineIds = usePresenceStore((s) => s.onlineIds)
+    const synced = usePresenceStore((s) => s.synced)
+
+    const query = useQuery({
+        queryKey: ['likes'],
+        queryFn: async () => {
+            const { data } = await matchApi.getLikes()
+            return data.data.likes as IncomingLike[]
+        },
+        staleTime: 30 * 1000,
+        refetchInterval: 60 * 1000,
+    })
+
+    const data = useMemo(
+        () => withLiveOnline(query.data ?? [], onlineIds, synced),
+        [query.data, onlineIds, synced],
+    )
+
+    return { ...query, data }
+}
+
 export function useMatches() {
-    return useQuery({
+    const onlineIds = usePresenceStore((s) => s.onlineIds)
+    const synced = usePresenceStore((s) => s.synced)
+
+    const query = useQuery({
         queryKey: ['matches'],
         queryFn: async () => {
             const { data } = await matchApi.getMatches()
@@ -41,6 +71,20 @@ export function useMatches() {
         staleTime: 30 * 1000,
         refetchInterval: 60 * 1000,
     })
+
+    const data = useMemo(() => {
+        const list = query.data ?? []
+        return list.map((m) => {
+            const fallback =
+                !!m.lastSeen && new Date(m.lastSeen).getTime() > Date.now() - 5 * 60 * 1000
+            return {
+                ...m,
+                isOnline: synced ? !!onlineIds[m.partnerId] : fallback,
+            }
+        })
+    }, [query.data, onlineIds, synced])
+
+    return { ...query, data }
 }
 
 export function useMessages(matchId: string | null) {
@@ -52,21 +96,85 @@ export function useMessages(matchId: string | null) {
         },
         enabled: !!matchId,
         staleTime: 0,
-        refetchInterval: 5000,
+        refetchInterval: false,
     })
 }
 
 export function useSendMessage() {
     const qc = useQueryClient()
     const toast = useToast()
+    const currentUserId = useAppStore((s) => s.currentUserId)
+
     return useMutation({
-        mutationFn: ({ matchId, content, type = 'text' }: { matchId: string; content: string; type?: string }) =>
+        mutationFn: ({ matchId, content, type = 'text' }: { matchId: string; content: string; type?: string; tempId?: string }) =>
             messageApi.sendMessage(matchId, content, type),
-        onSuccess: (_, vars) => {
-            qc.invalidateQueries({ queryKey: ['messages', vars.matchId] })
+        onMutate: async ({ matchId, content, tempId }) => {
+            const id = tempId || `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+            await qc.cancelQueries({ queryKey: ['messages', matchId] })
+            const previous = qc.getQueryData<{ messages: Message[]; convId: string; deleteTimer: string }>(['messages', matchId])
+
+            const optimistic: Message = {
+                id,
+                senderId: currentUserId || 'me',
+                content,
+                type: 'text',
+                isRead: false,
+                isDeleted: false,
+                expiresAt: null,
+                createdAt: new Date().toISOString(),
+                senderAlias: '',
+                senderAvatar: '',
+                deliveredAt: null,
+                status: 'sending',
+            }
+
+            qc.setQueryData(['messages', matchId], (old: { messages: Message[]; convId: string; deleteTimer: string } | undefined) => ({
+                messages: [...(old?.messages ?? previous?.messages ?? []), optimistic],
+                convId: old?.convId ?? previous?.convId ?? '',
+                deleteTimer: old?.deleteTimer ?? previous?.deleteTimer ?? 'never',
+            }))
+
+            return { previous, tempId: id, matchId }
+        },
+        onSuccess: (res, vars, ctx) => {
+            const msg = res?.data?.data?.message as Message | undefined
+
+            qc.setQueryData(['messages', vars.matchId], (old: { messages: Message[]; convId: string; deleteTimer: string } | undefined) => {
+                if (!old) return old
+                return {
+                    ...old,
+                    convId: (res?.data?.data as { convId?: string })?.convId || old.convId,
+                    messages: old.messages.map((m) => {
+                        if (m.id !== ctx?.tempId) return m
+                        if (msg?.id) {
+                            return {
+                                ...m,
+                                id: String(msg.id),
+                                createdAt: msg.createdAt || m.createdAt,
+                                expiresAt: msg.expiresAt ?? null,
+                                isRead: !!msg.isRead,
+                                deliveredAt: msg.deliveredAt ?? new Date().toISOString(),
+                                status: 'sent' as const,
+                            }
+                        }
+                        return { ...m, status: 'sent' as const, deliveredAt: new Date().toISOString() }
+                    }),
+                }
+            })
             qc.invalidateQueries({ queryKey: ['matches'] })
         },
-        onError: (e: { response?: { data?: { message?: string } } }) => {
+        onError: (e: { response?: { data?: { message?: string } } }, vars, ctx) => {
+            if (ctx?.tempId) {
+                qc.setQueryData(['messages', vars.matchId], (old: { messages: Message[]; convId: string; deleteTimer: string } | undefined) => {
+                    if (!old) return old
+                    return {
+                        ...old,
+                        messages: old.messages.map((m) =>
+                            m.id === ctx.tempId ? { ...m, status: 'failed' as const } : m,
+                        ),
+                    }
+                })
+            }
             toast.error('Message failed', e.response?.data?.message || 'Please try again.')
         },
     })
@@ -89,9 +197,11 @@ export function useNotifications() {
         queryKey: ['notifications'],
         queryFn: async () => {
             const { data } = await userApi.getNotifications()
-            return data.data.notifications as Notification[]
+            return data.data.notifications as AppNotification[]
         },
-        refetchInterval: 30 * 1000,
+        // Realtime invalidates this; light poll only as backup
+        staleTime: 60 * 1000,
+        refetchInterval: 120 * 1000,
     })
 }
 
@@ -113,6 +223,44 @@ export interface DiscoverProfile {
     lastSeen: string
     matchScore: number
     gender: string
+    desireArchetype?: string
+    isGold?: boolean
+    isObsidian?: boolean
+    seeking?: string
+    agePrefMin?: number
+    agePrefMax?: number
+    maxDistanceKm?: number
+    activeDisguiseSkin?: string
+    disguiseModeEnabled?: boolean
+    isGhostMode?: boolean
+    credits?: number
+    heightCm?: number
+    build?: string
+    orientation?: string
+    latitude?: number | null
+    longitude?: number | null
+    hasLocation?: boolean
+    email?: string
+    phone?: string
+    profileComplete?: boolean
+}
+
+export interface IncomingLike {
+    id: string
+    alias: string
+    avatarUrl: string
+    photoUrls: string[]
+    age: number
+    city: string
+    country: string
+    bio: string
+    isVerified: boolean
+    desireTags: string[]
+    desireArchetype: string
+    isSuper: boolean
+    likedAt: string
+    distanceKm: number | null
+    isOnline: boolean
 }
 
 export interface Match {
@@ -133,6 +281,7 @@ export interface Match {
     lastMessage: string | null
     lastMessageAt: string | null
     unreadCount: number
+    isOnline?: boolean
 }
 
 export interface Message {
@@ -146,9 +295,12 @@ export interface Message {
     createdAt: string
     senderAlias: string
     senderAvatar: string
+    deliveredAt?: string | null
+    /** Client-only: optimistic send pipeline */
+    status?: 'sending' | 'sent' | 'failed'
 }
 
-interface Notification {
+export interface AppNotification {
     id: string
     type: string
     title: string

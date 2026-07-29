@@ -1,19 +1,33 @@
 'use client'
 
+import { useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { orbitApi, pulseApi, engagementApi, matchApi } from '@/lib/api/auth'
+import { orbitApi, pulseApi, engagementApi, matchApi, echoApi } from '@/lib/api/auth'
 import { useToast } from './useToast'
 import { useAppStore } from '@/lib/store/useAppStore'
+import { usePresenceStore } from '@/lib/store/usePresenceStore'
+import { withLiveOnline } from './usePresence'
 
 export function useOrbitFeed() {
-    return useQuery({
+    const onlineIds = usePresenceStore((s) => s.onlineIds)
+    const synced = usePresenceStore((s) => s.synced)
+
+    const query = useQuery({
         queryKey: ['orbit-feed'],
         queryFn: async () => {
             const { data } = await orbitApi.getFeed()
             return data.data.profiles as OrbitProfile[]
         },
-        staleTime: 60 * 1000,
+        staleTime: 30 * 1000,
+        refetchOnMount: 'always',
     })
+
+    const data = useMemo(
+        () => withLiveOnline(query.data ?? [], onlineIds, synced),
+        [query.data, onlineIds, synced],
+    )
+
+    return { ...query, data }
 }
 
 export function useOrbitPull() {
@@ -100,13 +114,61 @@ export function usePulseGlobe() {
 }
 
 export function usePulsePeople() {
-    return useQuery({
+    const onlineIds = usePresenceStore((s) => s.onlineIds)
+    const synced = usePresenceStore((s) => s.synced)
+
+    const query = useQuery({
         queryKey: ['pulse-people'],
         queryFn: async () => {
             const { data } = await pulseApi.getPeople()
             return data.data.people as WorldPerson[]
         },
         staleTime: 5 * 60 * 1000,
+    })
+
+    const data = useMemo(
+        () => withLiveOnline(query.data ?? [], onlineIds, synced),
+        [query.data, onlineIds, synced],
+    )
+
+    return { ...query, data }
+}
+
+export function usePulseConnect() {
+    const qc = useQueryClient()
+    const toast = useToast()
+    const { triggerMatchAnimation } = useAppStore()
+
+    return useMutation({
+        mutationFn: (targetId: string) => pulseApi.connect(targetId),
+        onSuccess: (res, targetId) => {
+            const payload = res.data?.data as {
+                matched?: boolean
+                alreadySent?: boolean
+                targetAlias?: string
+            }
+
+            qc.setQueryData(['pulse-people'], (old: WorldPerson[] | undefined) =>
+                old?.map(p => (p.id === targetId ? { ...p, pulseSent: true } : p)),
+            )
+
+            const people = qc.getQueryData(['pulse-people']) as WorldPerson[] | undefined
+            const person = people?.find(p => p.id === targetId)
+            const name = payload?.targetAlias || person?.alias || 'them'
+
+            if (payload?.matched) {
+                triggerMatchAnimation({ alias: name, avatarUrl: person?.avatarUrl || '' })
+                toast.success("It's a Spark!", `You matched with ${name}`)
+            } else if (payload?.alreadySent) {
+                toast.info('Already sent', `You already connected with ${name}`)
+            } else {
+                toast.success('Connect sent', `${name} will see your request in notifications`)
+            }
+        },
+        onError: (e: unknown) => {
+            const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+            toast.error('Could not connect', msg || 'Please try again')
+        },
     })
 }
 
@@ -153,6 +215,10 @@ export interface OrbitProfile {
     orientation: string
     ring: number
     isOnline: boolean
+    distanceKm: number | null
+    latitude?: number | null
+    longitude?: number | null
+    profileCompletion: number
 }
 
 export interface EngagementHome {
@@ -198,10 +264,128 @@ export interface WorldPerson {
     tag: string
     online: boolean
     avatarUrl?: string
+    pulseSent?: boolean
+    isDemo?: boolean
 }
 
 export interface CallConsent {
     myConsent: boolean
     partnerConsent: boolean
     canCall: boolean
+}
+
+export interface EchoAuthor {
+    id: string
+    alias: string
+    archetype: string
+    avatarUrl: string
+    city: string
+}
+
+export interface EchoItem {
+    id: string
+    type: 'VIDEO' | 'AUDIO' | 'TEXT'
+    mediaUrl: string | null
+    thumbUrl: string | null
+    textBody: string | null
+    caption: string | null
+    bgTheme: string
+    faceBlurred: boolean
+    voiceMasked: boolean
+    audience: string
+    cityCluster: string
+    likeCount: number
+    status: string
+    lifespan: string
+    expiresAt: string | null
+    createdAt: string
+    author: EchoAuthor
+    viewerReaction?: string | null
+}
+
+export interface EchoLiker {
+    id: string
+    alias: string
+    archetype: string
+    avatarUrl: string
+    likedAt: string
+}
+
+export function useEchoFeed() {
+    return useQuery({
+        queryKey: ['echo-feed'],
+        queryFn: async () => {
+            const { data } = await echoApi.getFeed()
+            return data.data as { echoes: EchoItem[]; nextCursor: string | null; city: string }
+        },
+        staleTime: 20 * 1000,
+        refetchOnMount: 'always',
+    })
+}
+
+export function useMyEchoes() {
+    return useQuery({
+        queryKey: ['echo-mine'],
+        queryFn: async () => {
+            const { data } = await echoApi.getMine()
+            return data.data.echoes as EchoItem[]
+        },
+    })
+}
+
+export function useEchoLikers(echoId: string | null, enabled: boolean) {
+    return useQuery({
+        queryKey: ['echo-likers', echoId],
+        queryFn: async () => {
+            const { data } = await echoApi.getLikers(echoId!)
+            return data.data.likers as EchoLiker[]
+        },
+        enabled: !!echoId && enabled,
+    })
+}
+
+export function useCreateEcho() {
+    const qc = useQueryClient()
+    const toast = useToast()
+    return useMutation({
+        mutationFn: (formData: FormData) => echoApi.create(formData),
+        onSuccess: () => {
+            qc.invalidateQueries({ queryKey: ['echo-feed'] })
+            qc.invalidateQueries({ queryKey: ['echo-mine'] })
+            toast.success('Echo posted', 'Your expression is live in your city')
+        },
+        onError: (e: unknown) => {
+            const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+            toast.error('Could not post', msg || 'Please try again')
+        },
+    })
+}
+
+export function useEchoLike() {
+    const qc = useQueryClient()
+    return useMutation({
+        mutationFn: (id: string) => echoApi.like(id),
+        onSuccess: () => qc.invalidateQueries({ queryKey: ['echo-feed'] }),
+    })
+}
+
+export function useEchoDislike() {
+    const qc = useQueryClient()
+    return useMutation({
+        mutationFn: (id: string) => echoApi.dislike(id),
+        onSuccess: () => qc.invalidateQueries({ queryKey: ['echo-feed'] }),
+    })
+}
+
+export function useDeleteEcho() {
+    const qc = useQueryClient()
+    const toast = useToast()
+    return useMutation({
+        mutationFn: (id: string) => echoApi.delete(id),
+        onSuccess: () => {
+            qc.invalidateQueries({ queryKey: ['echo-mine'] })
+            qc.invalidateQueries({ queryKey: ['echo-feed'] })
+            toast.success('Echo removed')
+        },
+    })
 }

@@ -1,17 +1,22 @@
 'use client'
 
 import Link from 'next/link'
-import { Flame, Orbit, Map, MessageCircle, User, Ghost, Shield, LogOut, Home, Crown, ChevronRight } from 'lucide-react'
+import { Flame, Orbit, Map, MessageCircle, User, Ghost, Shield, LogOut, Home, Crown, ChevronRight, Heart, Radio } from 'lucide-react'
 import { usePathname } from 'next/navigation'
 import { useAppStore } from '@/lib/store/useAppStore'
 import { useSignOut } from '@/lib/hooks/useAuth'
 import { useAuthUser } from '@/lib/hooks/useAuth'
+import { useLikes } from '@/lib/hooks/useDiscover'
 import ProfileAvatar from '@/components/tryst/ProfileAvatar'
+import ThemeToggle from '@/components/tryst/ThemeToggle'
+import { OnlineDot, useSelfOnline } from '@/components/tryst/OnlineStatus'
 
 const navItems = [
     { href: '/tonight', icon: Home, label: 'Tonight' },
+    { href: '/echoes', icon: Radio, label: 'Echoes' },
     { href: '/orbits', icon: Orbit, label: 'Orbits' },
     { href: '/pulse', icon: Map, label: 'Pulse' },
+    { href: '/likes', icon: Heart, label: 'Likes' },
     { href: '/chat', icon: MessageCircle, label: 'Chats' },
     { href: '/you', icon: User, label: 'You' },
 ]
@@ -24,6 +29,8 @@ export default function AppSidebar({ unreadCount }: AppSidebarProps) {
     const pathname = usePathname()
     const { isGhostMode, toggleGhostMode } = useAppStore()
     const signOut = useSignOut()
+    const { data: likes = [] } = useLikes()
+    const likesCount = likes.length
 
     return (
         <aside className="hidden lg:flex w-64 flex-shrink-0 flex-col app-sidebar app-sidebar-left sticky top-0 h-screen z-40">
@@ -39,7 +46,7 @@ export default function AppSidebar({ unreadCount }: AppSidebarProps) {
                 </Link>
             </div>
 
-            <div className="px-3 py-3 border-b border-tryst-border/80">
+            <div className="px-3 py-3 border-b border-tryst-border/80 space-y-2">
                 <button
                     onClick={toggleGhostMode}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
@@ -54,12 +61,15 @@ export default function AppSidebar({ unreadCount }: AppSidebarProps) {
                         <div className={`w-3 h-3 bg-white rounded-full mt-0.5 transition-transform ${isGhostMode ? 'translate-x-4 ml-0.5' : 'ml-0.5'}`} />
                     </div>
                 </button>
+                <ThemeToggle className="w-full justify-start" />
             </div>
 
             <nav className="flex-1 py-4 px-3 space-y-0.5 overflow-y-auto">
                 {navItems.map((item) => {
                     const isActive = pathname === item.href || pathname.startsWith(item.href + '/')
                     const isChat = item.href === '/chat'
+                    const isLikes = item.href === '/likes'
+                    const badge = isChat ? unreadCount : isLikes ? likesCount : 0
                     const Icon = item.icon
                     return (
                         <Link
@@ -73,9 +83,9 @@ export default function AppSidebar({ unreadCount }: AppSidebarProps) {
                         >
                             <Icon className={`w-5 h-5 ${isActive ? 'text-crimson-300' : ''}`} />
                             <span>{item.label}</span>
-                            {isChat && unreadCount > 0 && (
+                            {badge > 0 && (
                                 <span className="ml-auto min-w-5 h-5 px-1 rounded-full bg-crimson text-white text-xs flex items-center justify-center font-bold">
-                                    {unreadCount}
+                                    {badge}
                                 </span>
                             )}
                         </Link>
@@ -108,6 +118,7 @@ export default function AppSidebar({ unreadCount }: AppSidebarProps) {
 export function AppRightRail() {
     const { data: me } = useAuthUser()
     const { isGhostMode, isNightMode } = useAppStore()
+    const isOnline = useSelfOnline()
 
     return (
         <aside className="hidden xl:flex w-64 flex-shrink-0 flex-col app-sidebar app-sidebar-right sticky top-0 h-screen z-30">
@@ -115,10 +126,15 @@ export function AppRightRail() {
                 <p className="text-[10px] font-mono tracking-[0.2em] uppercase text-ivory-600 mb-3">Your pulse</p>
                 {me ? (
                     <div className="flex items-center gap-3">
-                        <ProfileAvatar seed={me.alias} src={me.avatarUrl} size={44} className="border-2 border-crimson/40" />
+                        <div className="relative shrink-0">
+                            <ProfileAvatar seed={me.alias} src={me.avatarUrl} size={44} className="border-2 border-crimson/40" />
+                            <OnlineDot online={isOnline} size="md" className="absolute bottom-0 right-0" borderClass="border-tryst-card" />
+                        </div>
                         <div className="min-w-0">
                             <p className="text-ivory-100 font-medium text-sm truncate">{me.alias}</p>
-                            <p className="text-ivory-600 text-xs truncate">{me.city || 'Worldwide'}</p>
+                            <p className={`text-xs truncate ${isOnline ? 'text-emerald-400' : 'text-ivory-600'}`}>
+                                {isGhostMode ? 'Ghost · hidden' : isOnline ? 'Online now' : 'Offline'}
+                            </p>
                         </div>
                     </div>
                 ) : (
@@ -134,8 +150,14 @@ export function AppRightRail() {
                     </div>
                     <div className="space-y-2 text-xs">
                         <div className="flex justify-between text-ivory-400">
+                            <span>Presence</span>
+                            <span className={isOnline ? 'text-emerald-400' : 'text-ivory-500'}>
+                                {isGhostMode ? 'Ghost' : isOnline ? 'Online' : 'Offline'}
+                            </span>
+                        </div>
+                        <div className="flex justify-between text-ivory-400">
                             <span>Mode</span>
-                            <span className="text-ivory-200">{isNightMode ? 'Night' : 'Standard'}</span>
+                            <span className="text-tryst-text">{isNightMode ? 'Dark' : 'Light'}</span>
                         </div>
                         <div className="flex justify-between text-ivory-400">
                             <span>Membership</span>
@@ -161,6 +183,7 @@ export function AppRightRail() {
                     <p className="text-[10px] font-mono tracking-wider uppercase text-ivory-600 mb-2">Quick links</p>
                     <div className="space-y-1">
                         {[
+                            { href: '/echoes', label: 'Echo feed' },
                             { href: '/pulse', label: 'World map' },
                             { href: '/orbits', label: 'Spark orbits' },
                             { href: '/you', label: 'Disguise mode' },
