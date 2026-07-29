@@ -74,12 +74,12 @@ function MessageTicks({ msg }: { msg: Message }) {
         return <span className="text-[10px] text-crimson-300 font-medium">Failed</span>
     }
     if (msg.isRead) {
-        return <CheckCheck className="w-3.5 h-3.5 text-blue-400" aria-label="Seen" title="Seen" />
+        return <span title="Seen"><CheckCheck className="w-3.5 h-3.5 text-blue-400" aria-label="Seen" /></span>
     }
     if (msg.deliveredAt || msg.status === 'sent') {
-        return <CheckCheck className="w-3.5 h-3.5 text-ivory-500" aria-label="Delivered" title="Delivered" />
+        return <span title="Delivered"><CheckCheck className="w-3.5 h-3.5 text-ivory-500" aria-label="Delivered" /></span>
     }
-    return <Check className="w-3.5 h-3.5 text-ivory-600" aria-label="Sent" title="Sent" />
+    return <span title="Sent"><Check className="w-3.5 h-3.5 text-ivory-600" aria-label="Sent" /></span>
 }
 
 export default function ChatPage() {
