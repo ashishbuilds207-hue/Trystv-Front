@@ -3172,6 +3172,29 @@ body {
     padding: 0.875rem 1rem 0;
 }
 
+.orbit-range-chips {
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+}
+.orbit-range-chips::-webkit-scrollbar {
+    display: none;
+}
+
+@media (max-width: 640px) {
+    .orbit-cosmic-toolbar {
+        padding: 0.75rem 0.75rem 0;
+        gap: 0.5rem;
+    }
+    .orbit-cosmic-card--immersive .orbit-cosmic-filter {
+        padding: 0.5rem 0.7rem;
+        min-width: 0;
+    }
+    .orbit-cosmic-card--immersive .orbit-cosmic-avatar-btn {
+        padding: 0.5rem 0.65rem;
+        min-width: 2.5rem;
+    }
+}
+
 .orbit-cosmic-card--immersive .orbit-cosmic-filter {
     padding: 0.55rem 0.85rem;
     background: rgba(8, 4, 4, 0.9);

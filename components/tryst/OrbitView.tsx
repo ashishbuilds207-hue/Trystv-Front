@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { Flame, Heart, Filter, Loader2, X, UserCircle, ImageIcon, SlidersHorizontal, Navigation, Globe, MapPin, Hand, MousePointerClick, HelpCircle, ChevronDown } from 'lucide-react'
+import { Flame, Heart, Filter, Loader2, X, UserCircle, ImageIcon, SlidersHorizontal, Navigation, Globe, MapPin, Hand, MousePointerClick, HelpCircle, ChevronDown, Building2, Flag } from 'lucide-react'
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
 import { useOrbitFeed, useOrbitPull, useOrbitIgnite, type OrbitProfile } from '@/lib/hooks/useFeatures'
@@ -11,12 +11,25 @@ import { useUpdateLocation } from '@/lib/hooks/useGeoLocation'
 import { useAppStore } from '@/lib/store/useAppStore'
 import { userApi } from '@/lib/api/auth'
 import { useQueryClient } from '@tanstack/react-query'
+import {
+    ORBIT_RANGE_KM,
+    orbitRangeLabel,
+    orbitRangeModeFromKm,
+    type OrbitRangeMode,
+} from '@/lib/geo/distance'
 import ProfileAvatar from './ProfileAvatar'
 import OrbitSpark from './OrbitSpark'
 
 const ARCHETYPES: Record<string, string> = {
     WANDERER: 'Wanderer', FLAME: 'Flame', GHOST: 'Ghost', SPARK: 'Spark', STORY: 'Story',
 }
+
+const RANGE_OPTIONS: { id: OrbitRangeMode; label: string; hint: string; icon: typeof MapPin }[] = [
+    { id: 'nearby', label: 'Nearby', hint: 'People close to you', icon: MapPin },
+    { id: 'city', label: 'City', hint: 'Same city', icon: Building2 },
+    { id: 'country', label: 'Country', hint: 'Same country', icon: Flag },
+    { id: 'worldwide', label: 'Worldwide', hint: 'Anyone, anywhere', icon: Globe },
+]
 
 export default function OrbitView() {
     const { data: profiles = [], isLoading } = useOrbitFeed()
@@ -49,12 +62,13 @@ export default function OrbitView() {
     const [selected, setSelected] = useState<OrbitProfile | null>(null)
     const [showFilters, setShowFilters] = useState(false)
     const [activeGesture, setActiveGesture] = useState<'hold' | 'double' | 'tap'>('tap')
-    const [prefs, setPrefs] = useState({ seeking: 'Everyone', ageMin: 18, ageMax: 60, distance: 50 })
+    const [prefs, setPrefs] = useState({ seeking: 'Everyone', ageMin: 18, ageMax: 60, distance: 25 })
     const [applying, setApplying] = useState(false)
 
     const isGold = me?.isGold
     const visible = profiles.slice(0, 20)
-    const maxDistanceKm = me?.maxDistanceKm ?? 50
+    const maxDistanceKm = me?.maxDistanceKm ?? 25
+    const rangeMode = orbitRangeModeFromKm(maxDistanceKm)
 
     const flash = useCallback((msg: string, gold = false) => {
         setToast(msg)
@@ -73,6 +87,15 @@ export default function OrbitView() {
         if (!live) return selected
         return { ...selected, isOnline: live.isOnline }
     }, [selected, profiles])
+
+    const setRangeMode = (mode: OrbitRangeMode) => {
+        setPrefs((p) => ({
+            ...p,
+            distance: mode === 'nearby'
+                ? (p.distance < 85 ? Math.min(Math.max(p.distance, 5), 80) : ORBIT_RANGE_KM.nearby)
+                : ORBIT_RANGE_KM[mode],
+        }))
+    }
 
     const doPull = async (p: OrbitProfile) => {
         if (pulled[p.id]) { flash(`Already showing interest in ${p.alias}`); closeProfile(); return }
@@ -110,11 +133,12 @@ export default function OrbitView() {
     }
 
     const openFilters = () => {
+        const dist = me?.maxDistanceKm ?? 25
         setPrefs({
             seeking: me?.seeking || 'Everyone',
             ageMin: me?.agePrefMin ?? 18,
             ageMax: me?.agePrefMax ?? 60,
-            distance: me?.maxDistanceKm ?? 50,
+            distance: dist,
         })
         setShowFilters(true)
     }
@@ -137,7 +161,8 @@ export default function OrbitView() {
     )
 
     const orbitTheme = isNightMode ? 'dark' : 'light'
-    const filterLabel = `${me?.seeking || prefs.seeking} · ${me?.agePrefMin || prefs.ageMin}–${me?.agePrefMax || prefs.ageMax} · ${(me?.maxDistanceKm || prefs.distance) >= 100 ? 'worldwide' : `${me?.maxDistanceKm || prefs.distance} km`}`
+    const prefsMode = orbitRangeModeFromKm(prefs.distance)
+    const filterLabel = `${me?.seeking || prefs.seeking} · ${me?.agePrefMin || prefs.ageMin}–${me?.agePrefMax || prefs.ageMax} · ${orbitRangeLabel(me?.maxDistanceKm ?? prefs.distance)}`
 
     return (
         <div className={`page-content pb-28 page-transition max-w-3xl mx-auto orbit-cosmic-shell ${orbitTheme === 'light' ? 'orbit-cosmic-shell--light' : ''}`}>
@@ -170,8 +195,8 @@ export default function OrbitView() {
                             className="orbit-cosmic-filter flex-1 flex items-center gap-2 min-w-0"
                         >
                             <Filter className="w-3.5 h-3.5 text-crimson-300 shrink-0" />
-                            <span className="truncate text-xs sm:text-sm text-tryst-muted">{filterLabel}</span>
-                            <SlidersHorizontal className="w-4 h-4 text-crimson-300/70 shrink-0 ml-auto" />
+                            <span className="truncate text-xs sm:text-sm text-tryst-muted flex-1 text-left">{filterLabel}</span>
+                            <SlidersHorizontal className="w-4 h-4 text-crimson-300/70 shrink-0" />
                         </button>
                         <button
                             type="button"
@@ -181,8 +206,45 @@ export default function OrbitView() {
                             title="Photos / Avatars"
                         >
                             {orbitAvatarMode ? <UserCircle className="w-3.5 h-3.5" /> : <ImageIcon className="w-3.5 h-3.5" />}
-                            <span className="font-mono text-[9px] tracking-wider">{orbitAvatarMode ? 'AVATAR' : 'PHOTO'}</span>
+                            <span className="font-mono text-[9px] tracking-wider hidden min-[400px]:inline">{orbitAvatarMode ? 'AVATAR' : 'PHOTO'}</span>
                         </button>
+                    </div>
+
+                    {/* Quick range chips — mobile friendly */}
+                    <div className="orbit-range-chips px-3 sm:px-4 pt-2.5 flex gap-1.5 overflow-x-auto no-scrollbar">
+                        {RANGE_OPTIONS.map((opt) => {
+                            const active = rangeMode === opt.id
+                            const Icon = opt.icon
+                            return (
+                                <button
+                                    key={opt.id}
+                                    type="button"
+                                    onClick={async () => {
+                                        const km = opt.id === 'nearby'
+                                            ? (maxDistanceKm < 85 ? Math.min(Math.max(maxDistanceKm, 5), 80) : ORBIT_RANGE_KM.nearby)
+                                            : ORBIT_RANGE_KM[opt.id]
+                                        try {
+                                            await userApi.updateProfile({ maxDistanceKm: km })
+                                            await Promise.all([
+                                                qc.invalidateQueries({ queryKey: ['me'] }),
+                                                qc.invalidateQueries({ queryKey: ['orbit-feed'] }),
+                                            ])
+                                            flash(`Showing · ${opt.label}`)
+                                        } catch {
+                                            flash('Could not update range')
+                                        }
+                                    }}
+                                    className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[11px] font-medium transition-all ${
+                                        active
+                                            ? 'border-crimson/50 bg-crimson/15 text-crimson-200'
+                                            : 'border-tryst-border/80 text-ivory-500 bg-tryst-bg/40'
+                                    }`}
+                                >
+                                    <Icon className="w-3 h-3" />
+                                    {opt.label}
+                                </button>
+                            )
+                        })}
                     </div>
 
                     <div className="orbit-cosmic-viewport orbit-cosmic-viewport--spark touch-none select-none">
@@ -386,101 +448,157 @@ export default function OrbitView() {
                 document.body,
             )}
 
-            {showFilters && (
-                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4" onClick={() => setShowFilters(false)}>
-                    <div className="bg-tryst-card border border-tryst-border rounded-2xl p-6 max-w-md w-full shadow-2xl" onClick={e => e.stopPropagation()}>
-                        <h3 className="font-playfair text-xl text-ivory-100 mb-4">Map filters</h3>
+            {showFilters && typeof document !== 'undefined' && createPortal(
+                <div
+                    className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-end sm:items-center justify-center sm:p-4"
+                    onClick={() => setShowFilters(false)}
+                    role="dialog"
+                    aria-modal="true"
+                >
+                    <div
+                        className="bg-tryst-card border border-tryst-border rounded-t-3xl sm:rounded-2xl p-5 sm:p-6 w-full max-w-md max-h-[92vh] overflow-y-auto shadow-2xl safe-bottom"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="font-playfair text-xl text-ivory-100">Map filters</h3>
+                            <button
+                                type="button"
+                                aria-label="Close filters"
+                                onClick={() => setShowFilters(false)}
+                                className="w-9 h-9 rounded-full border border-tryst-border flex items-center justify-center text-ivory-400 hover:text-ivory-100"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
+
                         <label className="text-xs text-ivory-500 uppercase tracking-wider mb-2 block">Looking for</label>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+                        <div className="grid grid-cols-2 gap-2 mb-5">
                             {['Women', 'Men', 'Non-binary', 'Everyone'].map(s => (
-                                <button key={s} onClick={() => setPrefs(p => ({ ...p, seeking: s }))}
+                                <button key={s} type="button" onClick={() => setPrefs(p => ({ ...p, seeking: s }))}
                                     className={`py-2.5 rounded-xl border text-sm transition-all ${prefs.seeking === s ? 'border-crimson bg-crimson/10 text-crimson-300' : 'border-tryst-border text-ivory-400 hover:border-tryst-border-2'}`}>
                                     {s}
                                 </button>
                             ))}
                         </div>
+
                         <label className="text-xs text-ivory-500 uppercase tracking-wider mb-2 block">Age {prefs.ageMin}–{prefs.ageMax}</label>
-                        <div className="flex gap-3 mb-4">
+                        <div className="flex gap-3 mb-5">
                             <input type="range" min={18} max={60} value={prefs.ageMin} onChange={e => setPrefs(p => ({ ...p, ageMin: +e.target.value }))} className="flex-1 accent-crimson" />
                             <input type="range" min={18} max={60} value={prefs.ageMax} onChange={e => setPrefs(p => ({ ...p, ageMax: +e.target.value }))} className="flex-1 accent-crimson" />
                         </div>
+
                         <label className="text-xs text-ivory-500 uppercase tracking-wider mb-2 block">My location</label>
                         <button
                             type="button"
                             onClick={useMyLocation}
                             disabled={updateLocation.isPending}
-                            className={`w-full mb-4 py-2.5 rounded-xl border flex items-center justify-center gap-2 text-sm transition-all ${
+                            className={`w-full mb-5 py-2.5 rounded-xl border flex items-center justify-center gap-2 text-sm transition-all ${
                                 hasLocation ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' : 'border-tryst-border text-ivory-300 hover:border-crimson/40'
                             }`}
                         >
                             {updateLocation.isPending
                                 ? <><Loader2 className="w-4 h-4 animate-spin" /> Getting location…</>
-                                : <><Navigation className="w-4 h-4" /> {hasLocation ? 'Location set · Update' : 'Use my current location'}</>
+                                : <><Navigation className="w-4 h-4" /> {hasLocation ? `Location set${me?.city ? ` · ${me.city}` : ''} · Update` : 'Use my current location'}</>
                             }
                         </button>
 
-                        <label className="text-xs text-ivory-500 uppercase tracking-wider mb-2 block">Range</label>
+                        <label className="text-xs text-ivory-500 uppercase tracking-wider mb-2 block">Show people</label>
                         <div className="grid grid-cols-2 gap-2 mb-3">
-                            <button
-                                type="button"
-                                onClick={() => setPrefs(p => ({ ...p, distance: p.distance >= 100 ? 50 : p.distance }))}
-                                className={`py-2.5 rounded-xl border text-sm flex items-center justify-center gap-2 transition-all ${prefs.distance < 100 ? 'border-crimson bg-crimson/10 text-crimson-300' : 'border-tryst-border text-ivory-400'}`}>
-                                <MapPin className="w-4 h-4" /> Nearby
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setPrefs(p => ({ ...p, distance: 100 }))}
-                                className={`py-2.5 rounded-xl border text-sm flex items-center justify-center gap-2 transition-all ${prefs.distance >= 100 ? 'border-gold bg-gold/10 text-gold-400' : 'border-tryst-border text-ivory-400'}`}>
-                                <Globe className="w-4 h-4" /> Worldwide
-                            </button>
+                            {RANGE_OPTIONS.map((opt) => {
+                                const active = prefsMode === opt.id
+                                const Icon = opt.icon
+                                return (
+                                    <button
+                                        key={opt.id}
+                                        type="button"
+                                        onClick={() => setRangeMode(opt.id)}
+                                        className={`py-3 px-2.5 rounded-xl border text-left transition-all ${
+                                            active
+                                                ? opt.id === 'worldwide'
+                                                    ? 'border-gold bg-gold/10 text-gold-300'
+                                                    : 'border-crimson bg-crimson/10 text-crimson-200'
+                                                : 'border-tryst-border text-ivory-400'
+                                        }`}
+                                    >
+                                        <span className="flex items-center gap-1.5 text-sm font-medium">
+                                            <Icon className="w-3.5 h-3.5 shrink-0" />
+                                            {opt.label}
+                                        </span>
+                                        <span className="block text-[10px] mt-1 opacity-70 leading-snug">{opt.hint}</span>
+                                    </button>
+                                )
+                            })}
                         </div>
 
-                        {prefs.distance < 100 ? (
+                        {prefsMode === 'nearby' && (
                             <>
                                 <label className="text-xs text-ivory-500 uppercase tracking-wider mb-2 block">
-                                    Within {prefs.distance} km {!hasLocation && <span className="text-gold-500 normal-case tracking-normal">· set location for precise results</span>}
+                                    Within {Math.min(Math.max(prefs.distance, 5), 80)} km
+                                    {!hasLocation && <span className="text-gold-500 normal-case tracking-normal"> · set location for precise results</span>}
                                 </label>
-                                <input type="range" min={5} max={99} value={prefs.distance} onChange={e => setPrefs(p => ({ ...p, distance: +e.target.value }))} className="w-full mb-6 accent-crimson" />
+                                <input
+                                    type="range"
+                                    min={5}
+                                    max={80}
+                                    value={Math.min(Math.max(prefs.distance, 5), 80)}
+                                    onChange={e => setPrefs(p => ({ ...p, distance: +e.target.value }))}
+                                    className="w-full mb-5 accent-crimson"
+                                />
                             </>
-                        ) : (
-                            <p className="text-ivory-500 text-xs mb-6">Showing sparks from everywhere — distance limits are off.</p>
                         )}
+                        {prefsMode === 'city' && (
+                            <p className="text-ivory-500 text-xs mb-5 leading-relaxed">
+                                People in <span className="text-ivory-300">{me?.city || 'your city'}</span> (or within ~50 km).
+                            </p>
+                        )}
+                        {prefsMode === 'country' && (
+                            <p className="text-ivory-500 text-xs mb-5 leading-relaxed">
+                                People in <span className="text-ivory-300">{me?.country || 'your country'}</span>.
+                            </p>
+                        )}
+                        {prefsMode === 'worldwide' && (
+                            <p className="text-ivory-500 text-xs mb-5">Showing sparks from everywhere — distance limits are off.</p>
+                        )}
+
                         <button
                             disabled={applying}
                             onClick={async () => {
-                            setApplying(true)
-                            try {
-                                const ageMin = Math.min(prefs.ageMin, prefs.ageMax)
-                                const ageMax = Math.max(prefs.ageMin, prefs.ageMax)
-                                await userApi.updateProfile({
-                                    seeking: prefs.seeking,
-                                    agePrefMin: ageMin,
-                                    agePrefMax: ageMax,
-                                    maxDistanceKm: prefs.distance,
-                                })
-                                await Promise.all([
-                                    qc.invalidateQueries({ queryKey: ['me'] }),
-                                    qc.invalidateQueries({ queryKey: ['profile', 'me'] }),
-                                    qc.invalidateQueries({ queryKey: ['orbit-feed'] }),
-                                    qc.invalidateQueries({ queryKey: ['discover'] }),
-                                ])
-                                await qc.refetchQueries({ queryKey: ['orbit-feed'] })
-                                setShowFilters(false)
-                                const rangeLabel =
-                                    prefs.distance >= 100
-                                        ? 'worldwide'
-                                        : `within ${prefs.distance} km`
-                                flash(`Filters applied · ${prefs.seeking} · ages ${ageMin}–${ageMax} · ${rangeLabel}`)
-                            } catch {
-                                flash('Could not save filters')
-                            } finally {
-                                setApplying(false)
-                            }
-                        }} className="w-full py-3 bg-crimson-gradient text-white rounded-xl font-medium disabled:opacity-60 flex items-center justify-center gap-2">
+                                setApplying(true)
+                                try {
+                                    const ageMin = Math.min(prefs.ageMin, prefs.ageMax)
+                                    const ageMax = Math.max(prefs.ageMin, prefs.ageMax)
+                                    const mode = orbitRangeModeFromKm(prefs.distance)
+                                    const maxDistanceKm = mode === 'nearby'
+                                        ? Math.min(Math.max(prefs.distance, 5), 80)
+                                        : ORBIT_RANGE_KM[mode]
+                                    await userApi.updateProfile({
+                                        seeking: prefs.seeking,
+                                        agePrefMin: ageMin,
+                                        agePrefMax: ageMax,
+                                        maxDistanceKm,
+                                    })
+                                    await Promise.all([
+                                        qc.invalidateQueries({ queryKey: ['me'] }),
+                                        qc.invalidateQueries({ queryKey: ['profile', 'me'] }),
+                                        qc.invalidateQueries({ queryKey: ['orbit-feed'] }),
+                                        qc.invalidateQueries({ queryKey: ['discover'] }),
+                                    ])
+                                    await qc.refetchQueries({ queryKey: ['orbit-feed'] })
+                                    setShowFilters(false)
+                                    flash(`Filters applied · ${prefs.seeking} · ${ageMin}–${ageMax} · ${orbitRangeLabel(maxDistanceKm)}`)
+                                } catch {
+                                    flash('Could not save filters')
+                                } finally {
+                                    setApplying(false)
+                                }
+                            }}
+                            className="w-full py-3.5 bg-crimson-gradient text-white rounded-xl font-medium disabled:opacity-60 flex items-center justify-center gap-2"
+                        >
                             {applying ? <><Loader2 className="w-4 h-4 animate-spin" /> Applying…</> : 'Apply filters'}
                         </button>
                     </div>
-                </div>
+                </div>,
+                document.body,
             )}
         </div>
     )

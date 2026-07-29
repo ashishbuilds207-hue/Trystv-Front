@@ -5,6 +5,7 @@ import {
     haversineKm,
     matchesSeeking,
     isWorldwide,
+    matchesOrbitRange,
     orbitRingForDistance,
     roundDistanceKm,
 } from '@/lib/geo/distance'
@@ -247,9 +248,10 @@ export const userApi = {
         const ageMin = (profile?.age_pref_min as number) ?? 18
         const ageMax = (profile?.age_pref_max as number) ?? 60
         const maxKm = (profile?.max_distance_km as number) ?? 50
-        const worldwide = isWorldwide(maxKm)
         const meLat = profile?.latitude != null ? Number(profile.latitude) : null
         const meLng = profile?.longitude != null ? Number(profile.longitude) : null
+        const meCity = (profile?.city as string) || null
+        const meCountry = (profile?.country as string) || null
         const hasMeLoc =
             meLat != null && meLng != null && Number.isFinite(meLat) && Number.isFinite(meLng)
 
@@ -284,11 +286,17 @@ export const userApi = {
                 }
                 return { ...base, distanceKm }
             })
-            .filter((p) => {
-                if (worldwide || !hasMeLoc) return true
-                if (p.distanceKm == null) return false
-                return p.distanceKm <= maxKm
-            })
+            .filter((p) =>
+                matchesOrbitRange({
+                    maxKm,
+                    hasMeLoc,
+                    distanceKm: p.distanceKm,
+                    myCity: meCity,
+                    myCountry: meCountry,
+                    theirCity: p.city,
+                    theirCountry: p.country,
+                }),
+            )
             .sort((a, b) => (a.distanceKm ?? 99999) - (b.distanceKm ?? 99999))
             .slice(0, 20)
         return ok({ profiles })
@@ -759,6 +767,8 @@ export const orbitApi = {
         const worldwide = isWorldwide(maxKm)
         const meLat = profile?.latitude != null ? Number(profile.latitude) : null
         const meLng = profile?.longitude != null ? Number(profile.longitude) : null
+        const meCity = (profile?.city as string) || null
+        const meCountry = (profile?.country as string) || null
         const hasMeLoc =
             meLat != null && meLng != null && Number.isFinite(meLat) && Number.isFinite(meLng)
 
@@ -802,11 +812,17 @@ export const orbitApi = {
                     profileCompletion: 80,
                 }
             })
-            .filter((p) => {
-                if (worldwide || !hasMeLoc) return true
-                if (p.distanceKm == null) return false
-                return p.distanceKm <= maxKm
-            })
+            .filter((p) =>
+                matchesOrbitRange({
+                    maxKm,
+                    hasMeLoc,
+                    distanceKm: p.distanceKm,
+                    myCity: meCity,
+                    myCountry: meCountry,
+                    theirCity: p.city,
+                    theirCountry: p.country,
+                }),
+            )
             .sort((a, b) => {
                 const da = a.distanceKm ?? 99999
                 const db = b.distanceKm ?? 99999
@@ -816,7 +832,7 @@ export const orbitApi = {
             .slice(0, 20)
             .map((p) => ({
                 ...p,
-                ring: orbitRingForDistance(p.distanceKm, worldwide ? 5000 : maxKm),
+                ring: orbitRingForDistance(p.distanceKm, maxKm),
             }))
 
         return ok({
