@@ -34,30 +34,11 @@ export default function OneSignalProvider() {
                     allowLocalhostAsSecureOrigin: true,
                     serviceWorkerPath: 'OneSignalSDKWorker.js',
                     serviceWorkerParam: { scope: '/' },
-                    notifyButton: {
-                        enable: false,
-                        prenotify: false,
-                        showCredit: false,
-                        text: {
-                            'tip.state.unsubscribed': '',
-                            'tip.state.subscribed': '',
-                            'tip.state.blocked': '',
-                            'message.prenotify': '',
-                            'message.action.subscribed': '',
-                            'message.action.resubscribed': '',
-                            'message.action.unsubscribed': '',
-                            'dialog.main.title': '',
-                            'dialog.main.button.subscribe': '',
-                            'dialog.main.button.unsubscribe': '',
-                            'dialog.blocked.title': '',
-                            'dialog.blocked.message': '',
-                        },
-                    },
                     welcomeNotification: {
                         disable: true,
                         message: '',
                     },
-                })
+                } as Parameters<typeof OneSignal.init>[0])
 
                 if (cancelled) return
 
