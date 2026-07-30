@@ -53,6 +53,7 @@ export function useSupabaseCall(matchId: string | null, peer: CallPeer | null) {
     const [muted, setMuted] = useState(false)
     const [onHold, setOnHold] = useState(false)
     const [cameraOff, setCameraOff] = useState(false)
+    const [speakerOn, setSpeakerOn] = useState(true)
     const [error, setError] = useState<string | null>(null)
     const [elapsed, setElapsed] = useState(0)
 
@@ -68,6 +69,8 @@ export function useSupabaseCall(matchId: string | null, peer: CallPeer | null) {
     const makingOfferRef = useRef(false)
     const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
     const phaseRef = useRef<CallPhase>('idle')
+    const disconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const speakerOnRef = useRef(true)
 
     useEffect(() => {
         phaseRef.current = phase
@@ -107,6 +110,10 @@ export function useSupabaseCall(matchId: string | null, peer: CallPeer | null) {
 
     const cleanupMedia = useCallback(() => {
         stopTimer()
+        if (disconnectTimerRef.current) {
+            clearTimeout(disconnectTimerRef.current)
+            disconnectTimerRef.current = null
+        }
         try {
             pcRef.current?.close()
         } catch {
@@ -127,10 +134,185 @@ export function useSupabaseCall(matchId: string | null, peer: CallPeer | null) {
         setMuted(false)
         setOnHold(false)
         setCameraOff(false)
+        setSpeakerOn(true)
+        speakerOnRef.current = true
         setElapsed(0)
         setError(null)
         callIdRef.current = null
     }, [])
+
+    const playMedia = useCallback((el: HTMLMediaElement | null) => {
+        if (!el) return
+        if ('playsInline' in el) {
+            ;(el as HTMLVideoElement).playsInline = true
+        }
+        void el.play().catch(() => undefined)
+    }, [])
+
+    const applySpeaker = useCallback(async (on: boolean) => {
+        const audio = remoteAudioRef.current as HTMLAudioElement & {
+            setSinkId?: (id: string) => Promise<void>
+        } | null
+        if (!audio) return
+        audio.volume = 1
+        try {
+            if (typeof audio.setSinkId === 'function') {
+                const devices = await navigator.mediaDevices.enumerateDevices()
+                const outputs = devices.filter((d) => d.kind === 'audiooutput')
+                if (on) {
+                    const speaker =
+                        outputs.find((d) => /speaker|loud/i.test(d.label)) ||
+                        outputs.find((d) => !/earpiece|phone|handset|communication/i.test(d.label)) ||
+                        outputs[0]
+                    if (speaker?.deviceId) await audio.setSinkId(speaker.deviceId)
+                } else {
+                    const ear =
+                        outputs.find((d) => /earpiece|phone|handset|communication/i.test(d.label)) ||
+                        outputs.find((d) => d.deviceId === 'default') ||
+                        outputs[0]
+                    if (ear?.deviceId) await audio.setSinkId(ear.deviceId)
+                }
+            }
+        } catch {
+            /* browser may block setSinkId */
+        }
+    }, [])
+
+    const attachLocalPreview = useCallback((stream: MediaStream, callMode: CallMode) => {
+        localStreamRef.current = stream
+        if (localVideoRef.current) {
+            if (localVideoRef.current.srcObject !== stream) {
+                localVideoRef.current.srcObject = stream
+            }
+            localVideoRef.current.muted = true
+            localVideoRef.current.playsInline = true
+            if (callMode === 'video') playMedia(localVideoRef.current)
+        }
+    }, [playMedia])
+
+    const attachRemoteStream = useCallback((stream: MediaStream) => {
+        // Keep one stable MediaStream — replace tracks instead of swapping objects
+        if (!remoteStreamRef.current) {
+            remoteStreamRef.current = new MediaStream()
+        }
+        const stable = remoteStreamRef.current
+        stream.getTracks().forEach((track) => {
+            const existing = stable.getTracks().find((t) => t.kind === track.kind)
+            if (existing && existing.id !== track.id) {
+                stable.removeTrack(existing)
+            }
+            if (!stable.getTracks().some((t) => t.id === track.id)) {
+                stable.addTrack(track)
+            }
+        })
+
+        if (remoteAudioRef.current) {
+            if (remoteAudioRef.current.srcObject !== stable) {
+                remoteAudioRef.current.srcObject = stable
+            }
+            playMedia(remoteAudioRef.current)
+            void applySpeaker(speakerOnRef.current)
+        }
+        if (remoteVideoRef.current) {
+            if (remoteVideoRef.current.srcObject !== stable) {
+                remoteVideoRef.current.srcObject = stable
+            }
+            remoteVideoRef.current.playsInline = true
+            playMedia(remoteVideoRef.current)
+        }
+    }, [applySpeaker, playMedia])
+
+    const ensurePeerConnection = useCallback(
+        (callMode: CallMode) => {
+            if (pcRef.current) return pcRef.current
+            const pc = new RTCPeerConnection({
+                iceServers: ICE_SERVERS,
+                iceCandidatePoolSize: 4,
+            })
+            pcRef.current = pc
+
+            pc.onicecandidate = (ev) => {
+                if (!ev.candidate || !matchId || !myId) return
+                broadcast({
+                    type: 'ice',
+                    callId: callIdRef.current || undefined,
+                    matchId,
+                    fromUserId: myId,
+                    toUserId: peer?.partnerId,
+                    candidate: ev.candidate.toJSON(),
+                })
+            }
+
+            pc.ontrack = (ev) => {
+                const stream = ev.streams[0] || new MediaStream([ev.track])
+                attachRemoteStream(stream)
+                ev.track.onunmute = () => {
+                    if (remoteStreamRef.current) attachRemoteStream(remoteStreamRef.current)
+                }
+            }
+
+            pc.onconnectionstatechange = () => {
+                const state = pc.connectionState
+                if (state === 'connected' || state === 'connecting') {
+                    if (disconnectTimerRef.current) {
+                        clearTimeout(disconnectTimerRef.current)
+                        disconnectTimerRef.current = null
+                    }
+                }
+                if (state === 'connected') {
+                    setPhase('connected')
+                    if (!timerRef.current) {
+                        setElapsed(0)
+                        timerRef.current = setInterval(() => setElapsed((s) => s + 1), 1000)
+                    }
+                    // Re-bind media after ICE settles (fixes black flicker)
+                    if (remoteStreamRef.current) attachRemoteStream(remoteStreamRef.current)
+                    if (localStreamRef.current) attachLocalPreview(localStreamRef.current, callMode)
+                } else if (state === 'failed' || state === 'closed') {
+                    if (phaseRef.current === 'connected' || phaseRef.current === 'connecting') {
+                        toast.info('Call ended', 'The other person left the call')
+                        cleanupMedia()
+                        resetCallUi()
+                        setPhase('idle')
+                    }
+                } else if (state === 'disconnected') {
+                    // Brief ICE blips are common — wait before ending
+                    if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current)
+                    disconnectTimerRef.current = setTimeout(() => {
+                        if (pcRef.current?.connectionState === 'disconnected' || pcRef.current?.connectionState === 'failed') {
+                            toast.info('Call ended', 'Connection lost')
+                            cleanupMedia()
+                            resetCallUi()
+                            setPhase('idle')
+                        }
+                    }, 4000)
+                }
+            }
+
+            return pc
+        },
+        [attachLocalPreview, attachRemoteStream, broadcast, cleanupMedia, matchId, myId, peer?.partnerId, resetCallUi, toast],
+    )
+
+    const getLocalMedia = useCallback(async (callMode: CallMode) => {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+            },
+            video: callMode === 'video'
+                ? {
+                    width: { ideal: 1280, max: 1280 },
+                    height: { ideal: 720, max: 720 },
+                    frameRate: { ideal: 24, max: 30 },
+                    facingMode: 'user',
+                }
+                : false,
+        })
+        attachLocalPreview(stream, callMode)
+        return stream
+    }, [attachLocalPreview])
 
     const endCall = useCallback(
         (notify = true) => {
@@ -151,83 +333,6 @@ export function useSupabaseCall(matchId: string | null, peer: CallPeer | null) {
         },
         [broadcast, broadcastGlobal, cleanupMedia, matchId, myId, peer?.partnerId, resetCallUi],
     )
-
-    const attachLocalPreview = useCallback((stream: MediaStream, callMode: CallMode) => {
-        localStreamRef.current = stream
-        if (callMode === 'video' && localVideoRef.current) {
-            localVideoRef.current.srcObject = stream
-            localVideoRef.current.muted = true
-            void localVideoRef.current.play().catch(() => undefined)
-        }
-    }, [])
-
-    const attachRemoteStream = useCallback((stream: MediaStream) => {
-        remoteStreamRef.current = stream
-        if (remoteAudioRef.current) {
-            remoteAudioRef.current.srcObject = stream
-            void remoteAudioRef.current.play().catch(() => undefined)
-        }
-        if (remoteVideoRef.current) {
-            remoteVideoRef.current.srcObject = stream
-            void remoteVideoRef.current.play().catch(() => undefined)
-        }
-    }, [])
-
-    const ensurePeerConnection = useCallback(
-        (callMode: CallMode) => {
-            if (pcRef.current) return pcRef.current
-            const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS })
-            pcRef.current = pc
-
-            pc.onicecandidate = (ev) => {
-                if (!ev.candidate || !matchId || !myId) return
-                broadcast({
-                    type: 'ice',
-                    callId: callIdRef.current || undefined,
-                    matchId,
-                    fromUserId: myId,
-                    toUserId: peer?.partnerId,
-                    candidate: ev.candidate.toJSON(),
-                })
-            }
-
-            pc.ontrack = (ev) => {
-                const [stream] = ev.streams
-                if (stream) attachRemoteStream(stream)
-            }
-
-            pc.onconnectionstatechange = () => {
-                const state = pc.connectionState
-                if (state === 'connected') {
-                    setPhase('connected')
-                    if (!timerRef.current) {
-                        setElapsed(0)
-                        timerRef.current = setInterval(() => setElapsed((s) => s + 1), 1000)
-                    }
-                } else if (state === 'failed' || state === 'disconnected' || state === 'closed') {
-                    if (phaseRef.current === 'connected' || phaseRef.current === 'connecting') {
-                        toast.info('Call ended', 'The other person left the call')
-                        cleanupMedia()
-                        resetCallUi()
-                        setPhase('idle')
-                    }
-                }
-            }
-
-            void callMode
-            return pc
-        },
-        [attachRemoteStream, broadcast, cleanupMedia, matchId, myId, peer?.partnerId, resetCallUi, toast],
-    )
-
-    const getLocalMedia = useCallback(async (callMode: CallMode) => {
-        const stream = await navigator.mediaDevices.getUserMedia({
-            audio: true,
-            video: callMode === 'video',
-        })
-        attachLocalPreview(stream, callMode)
-        return stream
-    }, [attachLocalPreview])
 
     const startCall = useCallback(
         async (callMode: CallMode) => {
@@ -432,6 +537,15 @@ export function useSupabaseCall(matchId: string | null, peer: CallPeer | null) {
         })
     }, [mode, onHold])
 
+    const toggleSpeaker = useCallback(() => {
+        setSpeakerOn((prev) => {
+            const next = !prev
+            speakerOnRef.current = next
+            void applySpeaker(next)
+            return next
+        })
+    }, [applySpeaker])
+
     // Match signaling channel
     useEffect(() => {
         if (!matchId || !myId) return
@@ -496,6 +610,7 @@ export function useSupabaseCall(matchId: string | null, peer: CallPeer | null) {
         muted,
         onHold,
         cameraOff,
+        speakerOn,
         isMock: false,
         error,
         elapsed,
@@ -507,11 +622,13 @@ export function useSupabaseCall(matchId: string | null, peer: CallPeer | null) {
         toggleMute,
         toggleHold,
         toggleCamera,
+        toggleSpeaker,
         setLocalVideoEl: (el: HTMLVideoElement | null) => {
             localVideoRef.current = el
             if (el && localStreamRef.current) {
                 el.srcObject = localStreamRef.current
                 el.muted = true
+                el.playsInline = true
                 void el.play().catch(() => undefined)
             }
         },
@@ -519,6 +636,7 @@ export function useSupabaseCall(matchId: string | null, peer: CallPeer | null) {
             remoteVideoRef.current = el
             if (el && remoteStreamRef.current) {
                 el.srcObject = remoteStreamRef.current
+                el.playsInline = true
                 void el.play().catch(() => undefined)
             }
         },
@@ -527,6 +645,7 @@ export function useSupabaseCall(matchId: string | null, peer: CallPeer | null) {
             if (el && remoteStreamRef.current) {
                 el.srcObject = remoteStreamRef.current
                 void el.play().catch(() => undefined)
+                void applySpeaker(speakerOnRef.current)
             }
         },
     }

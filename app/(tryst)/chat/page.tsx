@@ -329,7 +329,7 @@ function ChatPageContent() {
     )
 
     return (
-        <div className="flex h-[calc(100vh-80px)] w-full">
+        <div className={`flex w-full ${activeMatchId ? 'h-[100dvh] lg:h-[calc(100vh-80px)]' : 'h-[calc(100vh-80px)]'}`}>
             {/* Sidebar */}
             <div className={`w-full lg:w-80 flex-shrink-0 border-r border-tryst-border flex flex-col ${activeMatchId ? 'hidden lg:flex' : 'flex'}`}>
                 <div className="p-4 border-b border-tryst-border">
@@ -386,9 +386,17 @@ function ChatPageContent() {
                     </div>
                 ) : (
                     <>
-                        {/* Header */}
-                        <div className="flex items-center gap-3 sm:gap-4 px-4 py-3 border-b border-tryst-border bg-tryst-bg-2">
-                            <button onClick={() => setActiveMatchId(null)} className="lg:hidden text-ivory-400 hover:text-ivory-200">
+                        {/* Header — sticky so partner name stays visible on mobile */}
+                        <div className="sticky top-0 z-40 flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 border-b border-tryst-border bg-tryst-bg-2 safe-top">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setActiveMatchId(null)
+                                    router.replace('/chat', { scroll: false })
+                                }}
+                                className="lg:hidden flex-shrink-0 text-ivory-400 hover:text-ivory-200 p-1"
+                                aria-label="Back to chats"
+                            >
                                 <ArrowLeft className="w-5 h-5" />
                             </button>
                             <button
@@ -410,29 +418,31 @@ function ChatPageContent() {
                             <button
                                 type="button"
                                 onClick={openPartnerProfile}
-                                className="flex-1 min-w-0 text-left"
+                                className="flex-1 min-w-0 text-left overflow-hidden"
                             >
-                                <div className="flex items-center gap-1.5">
-                                    <h3 className="text-ivory-100 font-semibold text-sm truncate">{activeMatch.alias}</h3>
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                    <h3 className="text-ivory-100 font-semibold text-base sm:text-sm truncate">
+                                        {activeMatch.alias || 'Chat'}
+                                    </h3>
                                     {activeMatch.isVerified && <CheckCircle2 className="w-3.5 h-3.5 text-crimson flex-shrink-0" />}
                                 </div>
-                                <p className={`text-xs flex items-center gap-1 ${
+                                <p className={`text-xs truncate flex items-center gap-1 ${
                                     partnerTyping ? 'text-crimson-300' : activeMatch.isOnline ? 'text-emerald-400' : 'text-ivory-500'
                                 }`}>
                                     {partnerTyping
                                         ? `${partnerName} is typing…`
                                         : activeMatch.isOnline
                                             ? 'Online now'
-                                            : <><MapPin className="w-3 h-3" />{activeMatch.city}</>}
+                                            : <><MapPin className="w-3 h-3 flex-shrink-0" /><span className="truncate">{activeMatch.city}</span></>}
                                 </p>
                             </button>
-                            <div className="flex items-center gap-1.5 flex-shrink-0">
+                            <div className="flex items-center gap-1 flex-shrink-0">
                                 <button
                                     type="button"
                                     onClick={startAudioCall}
                                     disabled={!callConsent?.canCall}
                                     title={callConsent?.canCall ? 'Audio call' : 'Mutual consent required'}
-                                    className="w-8 h-8 rounded-full bg-tryst-card border border-tryst-border flex items-center justify-center text-ivory-400 hover:text-crimson-300 hover:border-crimson/40 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                    className="w-9 h-9 rounded-full bg-tryst-card border border-tryst-border flex items-center justify-center text-ivory-400 hover:text-crimson-300 hover:border-crimson/40 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                                 >
                                     <Phone className="w-4 h-4" />
                                 </button>
@@ -441,14 +451,14 @@ function ChatPageContent() {
                                     onClick={startVideoCall}
                                     disabled={!callConsent?.canCall}
                                     title={callConsent?.canCall ? 'Video call' : 'Mutual consent required'}
-                                    className="w-8 h-8 rounded-full bg-tryst-card border border-tryst-border flex items-center justify-center text-ivory-400 hover:text-crimson-300 hover:border-crimson/40 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                    className="w-9 h-9 rounded-full bg-tryst-card border border-tryst-border flex items-center justify-center text-ivory-400 hover:text-crimson-300 hover:border-crimson/40 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                                 >
                                     <Video className="w-4 h-4" />
                                 </button>
                                 <button
                                     type="button"
                                     onClick={openPartnerProfile}
-                                    className="w-8 h-8 rounded-full bg-tryst-card border border-tryst-border flex items-center justify-center text-ivory-400 hover:text-ivory-200 transition-colors"
+                                    className="hidden sm:flex w-9 h-9 rounded-full bg-tryst-card border border-tryst-border items-center justify-center text-ivory-400 hover:text-ivory-200 transition-colors"
                                     title="More"
                                 >
                                     <MoreVertical className="w-4 h-4" />
@@ -743,6 +753,7 @@ function ChatPageContent() {
                             muted={call.muted}
                             onHold={call.onHold}
                             cameraOff={call.cameraOff}
+                            speakerOn={call.speakerOn}
                             elapsed={call.elapsed}
                             onAccept={() => void call.acceptCall()}
                             onDecline={call.declineCall}
@@ -750,6 +761,7 @@ function ChatPageContent() {
                             onToggleMute={call.toggleMute}
                             onToggleHold={call.toggleHold}
                             onToggleCamera={call.toggleCamera}
+                            onToggleSpeaker={call.toggleSpeaker}
                             setLocalVideoEl={call.setLocalVideoEl}
                             setRemoteVideoEl={call.setRemoteVideoEl}
                             setRemoteAudioEl={call.setRemoteAudioEl}

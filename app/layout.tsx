@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import Script from 'next/script'
 import '@/app/globals.css'
 import { Providers } from '@/lib/providers'
 
@@ -31,6 +32,10 @@ export default function RootLayout({
                 <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />
             </head>
             <body className="bg-tryst-bg font-inter text-tryst-text antialiased">
+                <Script
+                    src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js"
+                    strategy="afterInteractive"
+                />
                 <div className="site-viewport">
                     <Providers>
                         {children}

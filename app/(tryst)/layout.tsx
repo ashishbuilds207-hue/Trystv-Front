@@ -1,6 +1,6 @@
 'use client'
 
-import { usePathname } from 'next/navigation'
+import { usePathname, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { Flame, Ghost, Home, Orbit, MessageCircle, User, Heart, Radio } from 'lucide-react'
 import { useAppStore } from '@/lib/store/useAppStore'
@@ -17,7 +17,7 @@ import { SelfOnlineBadge } from '@/components/tryst/OnlineStatus'
 import NotificationsBell from '@/components/tryst/NotificationsBell'
 import OneSignalProvider from '@/components/tryst/OneSignalProvider'
 import IncomingCallListener from '@/components/tryst/IncomingCallListener'
-import { useEffect } from 'react'
+import { Suspense, useEffect } from 'react'
 
 const mobileNavItems = [
     { href: '/tonight', label: 'Tonight', icon: Home },
@@ -43,7 +43,16 @@ const PAGE_TITLES: Record<string, string> = {
 }
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
+    return (
+        <Suspense fallback={<div className="app-frame min-h-screen" />}>
+            <AppLayoutInner>{children}</AppLayoutInner>
+        </Suspense>
+    )
+}
+
+function AppLayoutInner({ children }: { children: React.ReactNode }) {
     const pathname = usePathname()
+    const searchParams = useSearchParams()
     const { isGhostMode, isNightMode, setDisguise } = useAppStore()
     const { data: matches = [] } = useMatches()
     const { data: likes = [] } = useLikes()
@@ -61,6 +70,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     const unreadCount = matches.reduce((acc: number, m: { unreadCount: number }) => acc + m.unreadCount, 0)
     const pageTitle = PAGE_TITLES[pathname] || (pathname.startsWith('/echoes') ? 'Echoes' : 'TRYST')
     const isEchoImmersive = pathname === '/echoes'
+    // Mobile open-chat: hide shell chrome so partner name in chat header is visible
+    const isOpenChatMobile = pathname === '/chat' && !!searchParams.get('match')
 
     return (
         <div className="app-frame min-h-screen">
@@ -74,8 +85,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 <div className="app-frame-inner">
                     <AppSidebar unreadCount={unreadCount} />
 
-                    <main className={`site-shell app-main relative flex flex-col min-h-screen min-w-0 flex-1 pb-20 lg:pb-0 ${isEchoImmersive ? 'app-main--echo' : ''}`}>
-                        {!isEchoImmersive && (
+                    <main className={`site-shell app-main relative flex flex-col min-h-screen min-w-0 flex-1 ${isOpenChatMobile ? 'pb-0' : 'pb-20'} lg:pb-0 ${isEchoImmersive ? 'app-main--echo' : ''}`}>
+                        {!isEchoImmersive && !isOpenChatMobile && (
                         <header className="sticky top-0 z-30 app-main-header px-5 sm:px-6 py-3.5 flex items-center justify-between flex-shrink-0">
                             <div className="lg:hidden flex items-center gap-2">
                                 <Flame className="w-5 h-5 text-crimson" strokeWidth={1.5} />
@@ -112,6 +123,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 </div>
             </div>
 
+            {!isOpenChatMobile && (
             <div className={`app-mobile-nav-wrap lg:hidden ${isEchoImmersive ? 'app-mobile-nav-wrap--echo' : ''}`}>
                 <nav className="mobile-nav flex items-center justify-around px-2 py-3">
                     {mobileNavItems.map((item) => {
@@ -140,6 +152,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                     })}
                 </nav>
             </div>
+            )}
         </div>
     )
 }
