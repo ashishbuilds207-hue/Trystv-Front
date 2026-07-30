@@ -101,7 +101,7 @@ function LoginContent() {
             } else {
                 localStorage.setItem('tryst_token', 'supabase')
                 setAuthenticated(true)
-                const name = (data.data.displayName || data.data.alias || '').trim()
+                const name = (data.data.user?.alias || '').trim()
                 toast.success(
                     'Welcome back!',
                     name ? `Good to see you, ${name}.` : `Signed in as ${normalizedEmail}`,
