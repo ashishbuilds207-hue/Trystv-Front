@@ -273,6 +273,14 @@ export interface Match {
     photoUrls: string[]
     age: number
     city: string
+    country?: string | null
+    bio?: string | null
+    profession?: string | null
+    desireArchetype?: string | null
+    gender?: string | null
+    orientation?: string | null
+    build?: string | null
+    profileCompletion?: number | null
     isVerified: boolean
     desireTags: string[]
     lastSeen: string

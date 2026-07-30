@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback, useMemo, Suspense } from 'rea
 import Image from 'next/image'
 import {
     Send, Timer, Lock, Mic, ArrowLeft, MoreVertical, Check, CheckCheck, CheckCircle2,
-    MapPin, AlertTriangle, Flame, Loader2, Phone, PhoneOff, Smile, X, Clock, RotateCcw,
+    MapPin, AlertTriangle, Flame, Loader2, Phone, PhoneOff, Smile, X, Clock, RotateCcw, Video,
 } from 'lucide-react'
 import { useMatches, useMessages, useSendMessage, type Message } from '@/lib/hooks/useDiscover'
 import { useCallConsent, useSetCallConsent } from '@/lib/hooks/useFeatures'
@@ -17,6 +17,10 @@ import { DEFAULT_AVATAR } from '@/components/tryst/ProfileAvatar'
 import { OnlineDot } from '@/components/tryst/OnlineStatus'
 import { useAppStore } from '@/lib/store/useAppStore'
 import { messageApi } from '@/lib/api/auth'
+import ChatPartnerProfile from '@/components/tryst/ChatPartnerProfile'
+import CallOverlay from '@/components/tryst/CallOverlay'
+import { useTwilioCall } from '@/lib/hooks/useTwilioCall'
+import { useToast } from '@/lib/hooks/useToast'
 
 const TIMER_LABELS: Record<string, string> = { '24h': '24 hours', '72h': '72 hours', '7d': '7 days', never: 'Never' }
 
@@ -109,6 +113,8 @@ function ChatPageContent() {
     const [partnerTyping, setPartnerTyping] = useState(false)
     const [showEmoji, setShowEmoji] = useState(false)
     const [showDeleteMenu, setShowDeleteMenu] = useState(false)
+    const [showPartnerProfile, setShowPartnerProfile] = useState(false)
+    const toast = useToast()
     const EMOJIS = ['😊', '🔥', '❤️', '😉', '🌹', '✨', '😂', '🥂', '💋', '🌙']
     const messagesEndRef = useRef<HTMLDivElement>(null)
     const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -132,6 +138,35 @@ function ChatPageContent() {
     const setCallConsent = useSetCallConsent()
     const partnerName = activeMatch?.alias || 'Them'
     const myId = currentUserId || me?.id || null
+
+    const call = useTwilioCall(
+        activeMatchId,
+        activeMatch
+            ? {
+                alias: activeMatch.alias,
+                avatarUrl: activeMatch.avatarUrl,
+                partnerId: activeMatch.partnerId,
+            }
+            : null,
+    )
+
+    const openPartnerProfile = () => setShowPartnerProfile(true)
+
+    const startAudioCall = () => {
+        if (!callConsent?.canCall) {
+            toast.warning('Call locked', 'Both of you must agree to calls first')
+            return
+        }
+        void call.startCall('audio')
+    }
+
+    const startVideoCall = () => {
+        if (!callConsent?.canCall) {
+            toast.warning('Call locked', 'Both of you must agree to calls first')
+            return
+        }
+        void call.startCall('video')
+    }
 
     // Auto-scroll on new messages / typing
     useEffect(() => {
@@ -270,6 +305,7 @@ function ChatPageContent() {
         setInputText('')
         stopTyping()
         setPartnerTyping(false)
+        setShowPartnerProfile(false)
         setActiveMatchId(id)
         router.replace(`/chat?match=${id}`, { scroll: false })
     }
@@ -339,12 +375,17 @@ function ChatPageContent() {
                 ) : (
                     <>
                         {/* Header */}
-                        <div className="flex items-center gap-4 px-4 py-3 border-b border-tryst-border bg-tryst-bg-2">
+                        <div className="flex items-center gap-3 sm:gap-4 px-4 py-3 border-b border-tryst-border bg-tryst-bg-2">
                             <button onClick={() => setActiveMatchId(null)} className="lg:hidden text-ivory-400 hover:text-ivory-200">
                                 <ArrowLeft className="w-5 h-5" />
                             </button>
-                            <div className="relative">
-                                <div className="w-10 h-10 rounded-full overflow-hidden">
+                            <button
+                                type="button"
+                                onClick={openPartnerProfile}
+                                className="relative flex-shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-crimson/60"
+                                title={`View ${activeMatch.alias}'s profile`}
+                            >
+                                <div className="w-10 h-10 rounded-full overflow-hidden border border-tryst-border hover:border-crimson/50 transition-colors">
                                     <Image src={activeMatch.avatarUrl || activeMatch.photoUrls?.[0] || DEFAULT_AVATAR} alt={activeMatch.alias} width={40} height={40} className="object-cover w-full h-full" unoptimized />
                                 </div>
                                 <OnlineDot
@@ -353,11 +394,15 @@ function ChatPageContent() {
                                     className="absolute bottom-0 right-0"
                                     borderClass="border-tryst-bg-2"
                                 />
-                            </div>
-                            <div className="flex-1 min-w-0">
+                            </button>
+                            <button
+                                type="button"
+                                onClick={openPartnerProfile}
+                                className="flex-1 min-w-0 text-left"
+                            >
                                 <div className="flex items-center gap-1.5">
-                                    <h3 className="text-ivory-100 font-semibold text-sm">{activeMatch.alias}</h3>
-                                    {activeMatch.isVerified && <CheckCircle2 className="w-3.5 h-3.5 text-crimson" />}
+                                    <h3 className="text-ivory-100 font-semibold text-sm truncate">{activeMatch.alias}</h3>
+                                    {activeMatch.isVerified && <CheckCircle2 className="w-3.5 h-3.5 text-crimson flex-shrink-0" />}
                                 </div>
                                 <p className={`text-xs flex items-center gap-1 ${
                                     partnerTyping ? 'text-crimson-300' : activeMatch.isOnline ? 'text-emerald-400' : 'text-ivory-500'
@@ -368,10 +413,35 @@ function ChatPageContent() {
                                             ? 'Online now'
                                             : <><MapPin className="w-3 h-3" />{activeMatch.city}</>}
                                 </p>
-                            </div>
-                            <button className="w-8 h-8 rounded-full bg-tryst-card border border-tryst-border flex items-center justify-center text-ivory-400 hover:text-ivory-200 transition-colors">
-                                <MoreVertical className="w-4 h-4" />
                             </button>
+                            <div className="flex items-center gap-1.5 flex-shrink-0">
+                                <button
+                                    type="button"
+                                    onClick={startAudioCall}
+                                    disabled={!callConsent?.canCall}
+                                    title={callConsent?.canCall ? 'Audio call' : 'Mutual consent required'}
+                                    className="w-8 h-8 rounded-full bg-tryst-card border border-tryst-border flex items-center justify-center text-ivory-400 hover:text-crimson-300 hover:border-crimson/40 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                    <Phone className="w-4 h-4" />
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={startVideoCall}
+                                    disabled={!callConsent?.canCall}
+                                    title={callConsent?.canCall ? 'Video call' : 'Mutual consent required'}
+                                    className="w-8 h-8 rounded-full bg-tryst-card border border-tryst-border flex items-center justify-center text-ivory-400 hover:text-crimson-300 hover:border-crimson/40 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                    <Video className="w-4 h-4" />
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={openPartnerProfile}
+                                    className="w-8 h-8 rounded-full bg-tryst-card border border-tryst-border flex items-center justify-center text-ivory-400 hover:text-ivory-200 transition-colors"
+                                    title="More"
+                                >
+                                    <MoreVertical className="w-4 h-4" />
+                                </button>
+                            </div>
                         </div>
 
                         {/* Call consent banner */}
@@ -385,7 +455,13 @@ function ChatPageContent() {
                                         <p className="text-ivory-200 text-sm font-medium">Voice call unlocked</p>
                                         <p className="text-ivory-500 text-xs">You both agreed to connect by voice</p>
                                     </div>
-                                    <button className="px-4 py-2 bg-crimson rounded-xl text-white text-xs font-medium">Call</button>
+                                    <button
+                                        type="button"
+                                        onClick={startAudioCall}
+                                        className="px-4 py-2 bg-crimson rounded-xl text-white text-xs font-medium hover:opacity-90"
+                                    >
+                                        Call
+                                    </button>
                                 </div>
                             ) : (
                                 <div className="flex items-center gap-3">
@@ -471,11 +547,16 @@ function ChatPageContent() {
                                             }`}
                                         >
                                             {!isSent && (
-                                                <div className={`w-7 h-7 rounded-full overflow-hidden flex-shrink-0 mt-auto ${
-                                                    clusteredWithNext ? 'invisible' : ''
-                                                }`}>
+                                                <button
+                                                    type="button"
+                                                    onClick={openPartnerProfile}
+                                                    className={`w-7 h-7 rounded-full overflow-hidden flex-shrink-0 mt-auto ${
+                                                        clusteredWithNext ? 'invisible pointer-events-none' : 'hover:ring-2 hover:ring-crimson/40'
+                                                    }`}
+                                                    title={`View ${partnerName}`}
+                                                >
                                                     <Image src={activeMatch.avatarUrl || DEFAULT_AVATAR} alt="" width={28} height={28} className="object-cover w-full h-full" unoptimized />
-                                                </div>
+                                                </button>
                                             )}
                                             <div className={`max-w-xs lg:max-w-sm flex flex-col gap-0.5 ${isSent ? 'items-end' : 'items-start'}`}>
                                                 <div className={`relative px-4 py-2.5 text-sm leading-relaxed ${
@@ -631,6 +712,37 @@ function ChatPageContent() {
                                 <p className="text-ivory-600 text-xs">Hover a message for time · Esc cancels draft</p>
                             </div>
                         </div>
+
+                        <ChatPartnerProfile
+                            partner={activeMatch}
+                            open={showPartnerProfile}
+                            onClose={() => setShowPartnerProfile(false)}
+                            canCall={!!callConsent?.canCall}
+                            onAudioCall={startAudioCall}
+                            onVideoCall={startVideoCall}
+                        />
+
+                        <CallOverlay
+                            open={call.phase !== 'idle' && call.phase !== 'ended'}
+                            phase={call.phase}
+                            mode={call.mode}
+                            partnerName={partnerName}
+                            partnerAvatar={activeMatch.avatarUrl || activeMatch.photoUrls?.[0]}
+                            muted={call.muted}
+                            onHold={call.onHold}
+                            cameraOff={call.cameraOff}
+                            isMock={call.isMock}
+                            elapsed={call.elapsed}
+                            onAccept={() => void call.acceptCall()}
+                            onDecline={call.declineCall}
+                            onEnd={() => call.endCall(true)}
+                            onToggleMute={call.toggleMute}
+                            onToggleHold={call.toggleHold}
+                            onToggleCamera={call.toggleCamera}
+                            setLocalVideoEl={call.setLocalVideoEl}
+                            setRemoteVideoEl={call.setRemoteVideoEl}
+                            setRemoteAudioEl={call.setRemoteAudioEl}
+                        />
                     </>
                 )}
             </div>
