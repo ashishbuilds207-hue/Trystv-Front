@@ -58,13 +58,23 @@ export async function POST(req: Request) {
         // 3) Consume OTP only after tokens are ready
         await supabase.rpc('consume_email_otp', { p_email: normalized })
 
-        // 4) Ensure profile row
+        // 4) Ensure profile row — never overwrite a saved display name (alias)
         const userClient = anonClient(accessToken)
-        await userClient.from('users').upsert({
-            id: userId,
-            email: normalized,
-            alias: normalized.split('@')[0] || 'NewUser',
-        })
+        const { data: existing } = await userClient
+            .from('users')
+            .select('id, alias, profile_complete, age, gender')
+            .eq('id', userId)
+            .maybeSingle()
+
+        if (!existing) {
+            await userClient.from('users').insert({
+                id: userId,
+                email: normalized,
+                alias: '',
+            })
+        } else {
+            await userClient.from('users').update({ email: normalized }).eq('id', userId)
+        }
 
         const { data: profile } = await userClient
             .from('users')
@@ -72,7 +82,8 @@ export async function POST(req: Request) {
             .eq('id', userId)
             .maybeSingle()
 
-        const isNew = !profile?.profile_complete || !profile?.age || !profile?.gender
+        const savedName = (profile?.alias || '').trim()
+        const isNew = !profile?.profile_complete || !profile?.age || !profile?.gender || !savedName
 
         // 5) Tokens for client setSession → next screen
         return NextResponse.json({
@@ -83,7 +94,8 @@ export async function POST(req: Request) {
                 userId,
                 accessToken,
                 refreshToken,
-                alias: profile?.alias || null,
+                alias: savedName || null,
+                displayName: savedName || null,
             },
         })
     } catch (e: unknown) {

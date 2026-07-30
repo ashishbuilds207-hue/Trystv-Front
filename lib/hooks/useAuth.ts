@@ -122,7 +122,7 @@ export function useRegister() {
                         : `Good to see you again, ${data.data.user?.alias}`,
                 )
             } else {
-                toast.success('Welcome to TRYST!', `Your story begins, ${data.data.user?.alias}.`)
+                toast.success('Welcome to TRYST!', `You're in as ${data.data.user?.alias}.`)
             }
         },
         onError: (e: unknown) =>

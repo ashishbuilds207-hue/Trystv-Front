@@ -197,15 +197,17 @@ export const authApi = {
             })
         }
 
+        const existing = await getProfileRow(data.user.id)
         await sb().from('users').upsert({
             id: data.user.id,
             email: payload.email,
             google_id: payload.googleId,
-            avatar_url: payload.avatar || null,
-            alias: payload.name || payload.email.split('@')[0],
+            avatar_url: payload.avatar || existing?.avatar_url || null,
+            // Keep saved display name; never overwrite with Google account name
+            alias: existing?.alias || '',
         })
         const profile = await getProfileRow(data.user.id)
-        const isNew = !profile?.profile_complete || !profile?.age
+        const isNew = !profile?.profile_complete || !profile?.age || !(profile?.alias || '').trim()
         if (isNew) {
             return ok({ isNew: true as const, email: payload.email, googleId: payload.googleId, avatarUrl: payload.avatar })
         }

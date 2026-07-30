@@ -101,7 +101,11 @@ function LoginContent() {
             } else {
                 localStorage.setItem('tryst_token', 'supabase')
                 setAuthenticated(true)
-                toast.success('Welcome back!', `Good to see you, ${data.data.user?.alias}.`)
+                const name = (data.data.displayName || data.data.alias || '').trim()
+                toast.success(
+                    'Welcome back!',
+                    name ? `Good to see you, ${name}.` : `Signed in as ${normalizedEmail}`,
+                )
                 router.push('/tonight')
             }
         } catch {
@@ -138,7 +142,7 @@ function LoginContent() {
                             <div className="mb-8">
                                 <h2 className="font-playfair text-3xl font-bold text-ivory-100 mb-2">Welcome back.</h2>
                                 <p className="text-ivory-500 text-sm">
-                                    Sign in with Google or get a verification code by email.
+                                    Sign in with your email or Google. Your saved name is what others see — not your email.
                                 </p>
                             </div>
 

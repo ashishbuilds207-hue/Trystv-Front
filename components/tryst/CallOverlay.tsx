@@ -14,7 +14,7 @@ import {
     Loader2,
 } from 'lucide-react'
 import { DEFAULT_AVATAR } from '@/components/tryst/ProfileAvatar'
-import type { CallMode, CallPhase } from '@/lib/hooks/useTwilioCall'
+import type { CallMode, CallPhase } from '@/lib/hooks/useSupabaseCall'
 
 function formatElapsed(sec: number) {
     const m = Math.floor(sec / 60)
@@ -31,7 +31,6 @@ interface CallOverlayProps {
     muted: boolean
     onHold: boolean
     cameraOff: boolean
-    isMock?: boolean
     elapsed: number
     onAccept: () => void
     onDecline: () => void
@@ -53,7 +52,6 @@ export default function CallOverlay({
     muted,
     onHold,
     cameraOff,
-    isMock,
     elapsed,
     onAccept,
     onDecline,
@@ -154,11 +152,6 @@ export default function CallOverlay({
                         {mode === 'video' ? 'Video call' : 'Audio call'}
                     </p>
                     <p className="text-crimson-300 text-sm font-medium">{statusLabel}</p>
-                    {isMock && phase === 'connected' && (
-                        <p className="text-ivory-600 text-xs mt-3 text-center max-w-xs">
-                            Demo mode — add Twilio keys for live partner audio
-                        </p>
-                    )}
                     {/* keep local video mount for attach even in audio layout when switching */}
                     <video ref={localRef} className="hidden" muted playsInline autoPlay />
                     <video ref={remoteRef} className="hidden" playsInline autoPlay />

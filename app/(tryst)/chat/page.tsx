@@ -19,7 +19,7 @@ import { useAppStore } from '@/lib/store/useAppStore'
 import { messageApi } from '@/lib/api/auth'
 import ChatPartnerProfile from '@/components/tryst/ChatPartnerProfile'
 import CallOverlay from '@/components/tryst/CallOverlay'
-import { useTwilioCall } from '@/lib/hooks/useTwilioCall'
+import { useSupabaseCall } from '@/lib/hooks/useSupabaseCall'
 import { useToast } from '@/lib/hooks/useToast'
 
 const TIMER_LABELS: Record<string, string> = { '24h': '24 hours', '72h': '72 hours', '7d': '7 days', never: 'Never' }
@@ -139,7 +139,7 @@ function ChatPageContent() {
     const partnerName = activeMatch?.alias || 'Them'
     const myId = currentUserId || me?.id || null
 
-    const call = useTwilioCall(
+    const call = useSupabaseCall(
         activeMatchId,
         activeMatch
             ? {
@@ -743,7 +743,6 @@ function ChatPageContent() {
                             muted={call.muted}
                             onHold={call.onHold}
                             cameraOff={call.cameraOff}
-                            isMock={call.isMock}
                             elapsed={call.elapsed}
                             onAccept={() => void call.acceptCall()}
                             onDecline={call.declineCall}

@@ -1,4 +1,4 @@
-import type { CallMode } from '@/lib/hooks/useTwilioCall'
+import type { CallMode } from '@/lib/hooks/useSupabaseCall'
 import type { OneSignalNotifyKind } from './types'
 
 export function callNotifyCopy(mode: CallMode, fromAlias?: string | null) {

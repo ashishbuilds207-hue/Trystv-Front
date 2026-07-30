@@ -103,7 +103,8 @@ export default function RegisterPage() {
                     setForm((p) => ({
                         ...p,
                         email: data.email || p.email,
-                        alias: p.alias || data.name?.split(' ')[0] || '',
+                        // Do not take Google display name — user saves their own name
+                        alias: p.alias || '',
                     }))
                     setHasSession(true)
                 } catch { /* ignore */ }
@@ -436,33 +437,41 @@ export default function RegisterPage() {
                 {step === 1 && (
                     <div className="space-y-6">
                         <div>
-                            <h2 className="font-playfair text-2xl font-bold text-ivory-100 mb-1">Create your alias.</h2>
-                            <p className="text-ivory-500 text-sm">Your real name is never shown. Choose a name that feels like you.</p>
+                            <h2 className="font-playfair text-2xl font-bold text-ivory-100 mb-1">Choose your name.</h2>
+                            <p className="text-ivory-500 text-sm mb-6">
+                                Your email is for login only. Save the display name people will see — only that name is shown.
+                            </p>
                         </div>
 
-                        {googleSignup && (
+                        {(googleSignup?.email || form.email) && (
                             <div className="flex items-center gap-3 p-3 bg-tryst-bg border border-tryst-border rounded-xl">
-                                {googleSignup.avatar ? (
+                                {googleSignup?.avatar ? (
                                     // eslint-disable-next-line @next/next/no-img-element
                                     <img src={googleSignup.avatar} alt="" className="w-10 h-10 rounded-full" />
                                 ) : (
-                                    <div className="w-10 h-10 rounded-full bg-tryst-border" />
+                                    <div className="w-10 h-10 rounded-full bg-tryst-border flex items-center justify-center">
+                                        <Mail className="w-4 h-4 text-ivory-500" />
+                                    </div>
                                 )}
                                 <div className="min-w-0">
-                                    <p className="text-ivory-200 text-sm font-medium truncate">{googleSignup.name || 'Google account'}</p>
-                                    <p className="text-ivory-500 text-xs truncate">{googleSignup.email}</p>
+                                    <p className="text-ivory-500 text-[10px] uppercase tracking-wider">Email</p>
+                                    <p className="text-ivory-200 text-sm font-medium truncate">
+                                        {googleSignup?.email || form.email}
+                                    </p>
                                 </div>
-                                <span className="ml-auto text-xs text-emerald-400 shrink-0">Verified</span>
+                                {googleSignup && (
+                                    <span className="ml-auto text-xs text-emerald-400 shrink-0">Verified</span>
+                                )}
                             </div>
                         )}
                         <div>
-                            <label className="text-ivory-400 text-xs font-medium tracking-wider uppercase mb-2 block">Your Alias</label>
+                            <label className="text-ivory-400 text-xs font-medium tracking-wider uppercase mb-2 block">Your name</label>
                             <div className="relative">
                                 <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-tryst-muted" />
                                 <input type="text" value={form.alias} onChange={(e) => updateForm('alias', e.target.value)}
-                                    placeholder="e.g. Scarlett M., The Wanderer" className="tryst-input pl-10" maxLength={30} />
+                                    placeholder="Name people will see" className="tryst-input pl-10" maxLength={30} />
                             </div>
-                            <p className="text-ivory-600 text-xs mt-1 flex items-center gap-1"><Lock className="w-3 h-3" /> Never your real name</p>
+                            <p className="text-ivory-600 text-xs mt-1 flex items-center gap-1"><Lock className="w-3 h-3" /> This is the only name others see</p>
                         </div>
                         <div>
                             <label className="text-ivory-400 text-xs font-medium tracking-wider uppercase mb-2 block">Age</label>
@@ -768,7 +777,7 @@ export default function RegisterPage() {
 
                         <div className="bg-tryst-card border border-tryst-border rounded-xl p-4 space-y-2">
                             <p className="text-ivory-400 text-xs font-medium tracking-wider uppercase mb-3">Your Profile Preview</p>
-                            {[['Alias', form.alias],['Age', form.age],['Status', form.relationshipStatus?.replace(/-/g,' ')],['Desires', `${form.desireTags.length} selected`]].map(([k, v]) => (
+                            {[['Name', form.alias],['Age', form.age],['Status', form.relationshipStatus?.replace(/-/g,' ')],['Desires', `${form.desireTags.length} selected`]].map(([k, v]) => (
                                 <div key={k} className="flex items-center justify-between text-sm">
                                     <span className="text-ivory-500">{k}</span>
                                     <span className="text-ivory-200 capitalize">{v}</span>
