@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAppStore } from '@/lib/store/useAppStore'
 import { useToast } from './useToast'
+import { requestPushNotify } from '@/lib/onesignal/client'
 
 export type CallMode = 'audio' | 'video'
 export type CallPhase =
@@ -18,6 +19,8 @@ export interface CallPeer {
     alias: string
     avatarUrl?: string | null
     partnerId: string
+    /** Caller's display name for invite payload */
+    myAlias?: string
 }
 
 interface TokenResponse {
@@ -221,20 +224,55 @@ export function useTwilioCall(matchId: string | null, peer: CallPeer | null) {
             setMode(callMode)
             setPhase('outgoing')
 
+            const invitePayload = {
+                type: 'invite' as const,
+                callId,
+                mode: callMode,
+                matchId,
+                fromUserId: myId,
+                fromAlias: peer.myAlias || 'Match',
+                fromAvatar: undefined as string | undefined,
+                toUserId: peer.partnerId,
+            }
+
             channelRef.current?.send({
                 type: 'broadcast',
                 event: 'call',
-                payload: {
-                    type: 'invite',
-                    callId,
-                    mode: callMode,
-                    fromUserId: myId,
-                    fromAlias: useAppStore.getState().currentUserId,
-                    toUserId: peer.partnerId,
-                },
+                payload: invitePayload,
             })
 
-            // Auto-connect after invite (callee accepts separately)
+            // Global channel so partner gets invite even if chat isn't open
+            try {
+                const supabase = createClient()
+                const globalCh = supabase.channel(`calls:user:${peer.partnerId}`)
+                await new Promise<void>((resolve) => {
+                    globalCh.subscribe((status) => {
+                        if (status === 'SUBSCRIBED') resolve()
+                    })
+                    setTimeout(() => resolve(), 1500)
+                })
+                await globalCh.send({
+                    type: 'broadcast',
+                    event: 'call',
+                    payload: invitePayload,
+                })
+                void supabase.removeChannel(globalCh)
+            } catch {
+                /* non-blocking */
+            }
+
+            void requestPushNotify({
+                toUserId: peer.partnerId,
+                kind: callMode === 'video' ? 'video_call' : 'audio_call',
+                title: callMode === 'video' ? '📹 Incoming video call' : '📞 Incoming audio call',
+                body: callMode === 'video'
+                    ? `${peer.myAlias || 'Your match'} is video calling you — tap to answer`
+                    : `${peer.myAlias || 'Your match'} is calling you — tap to answer`,
+                matchId,
+                callId,
+                mode: callMode,
+            })
+
             await joinRoom(callMode)
         },
         [joinRoom, matchId, myId, peer],
@@ -253,6 +291,15 @@ export function useTwilioCall(matchId: string | null, peer: CallPeer | null) {
         })
         await joinRoom(mode)
     }, [joinRoom, mode, myId, phase])
+
+    /** Opened from push / Accept banner — join room without sending a new invite */
+    const answerFromDeepLink = useCallback(
+        async (callMode: CallMode) => {
+            setMode(callMode)
+            await joinRoom(callMode)
+        },
+        [joinRoom],
+    )
 
     const declineCall = useCallback(() => {
         channelRef.current?.send({
@@ -330,8 +377,17 @@ export function useTwilioCall(matchId: string | null, peer: CallPeer | null) {
 
                 if (p.type === 'invite' && (!p.toUserId || p.toUserId === myId)) {
                     callIdRef.current = p.callId || null
-                    setMode(p.mode === 'video' ? 'video' : 'audio')
+                    const callMode = p.mode === 'video' ? 'video' : 'audio'
+                    setMode(callMode)
                     setPhase('incoming')
+                    toast.info(
+                        callMode === 'video' ? '📹 Incoming video call' : '📞 Incoming audio call',
+                        peer?.alias
+                            ? callMode === 'video'
+                                ? `${peer.alias} is video calling you`
+                                : `${peer.alias} is calling you`
+                            : 'Answer or decline below',
+                    )
                 }
                 if (p.type === 'decline' || p.type === 'end') {
                     cleanupMedia()
@@ -347,7 +403,7 @@ export function useTwilioCall(matchId: string | null, peer: CallPeer | null) {
             supabase.removeChannel(channel)
             channelRef.current = null
         }
-    }, [cleanupMedia, matchId, myId, resetCallUi, toast])
+    }, [cleanupMedia, matchId, myId, peer?.alias, resetCallUi, toast])
 
     useEffect(() => {
         return () => {
@@ -367,6 +423,7 @@ export function useTwilioCall(matchId: string | null, peer: CallPeer | null) {
         elapsed,
         startCall,
         acceptCall,
+        answerFromDeepLink,
         declineCall,
         endCall,
         toggleMute,

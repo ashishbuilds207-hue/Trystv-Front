@@ -146,9 +146,21 @@ function ChatPageContent() {
                 alias: activeMatch.alias,
                 avatarUrl: activeMatch.avatarUrl,
                 partnerId: activeMatch.partnerId,
+                myAlias: me?.alias || undefined,
             }
             : null,
     )
+
+    // Deep-link from push / global banner: /chat?match=…&call=audio|video
+    useEffect(() => {
+        const mode = searchParams.get('call')
+        if (!mode || !activeMatchId || !callConsent?.canCall) return
+        if (mode !== 'audio' && mode !== 'video') return
+        if (call.phase !== 'idle') return
+        void call.answerFromDeepLink(mode)
+        router.replace(`/chat?match=${activeMatchId}`, { scroll: false })
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeMatchId, callConsent?.canCall, searchParams])
 
     const openPartnerProfile = () => setShowPartnerProfile(true)
 

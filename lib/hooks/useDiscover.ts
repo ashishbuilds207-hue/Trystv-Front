@@ -162,6 +162,22 @@ export function useSendMessage() {
                 }
             })
             qc.invalidateQueries({ queryKey: ['matches'] })
+
+            // OneSignal push to partner (suppressed on their device if this chat is open)
+            const matches = qc.getQueryData<Match[]>(['matches'])
+            const partnerId = matches?.find((m) => m.id === vars.matchId)?.partnerId
+            if (partnerId) {
+                void import('@/lib/onesignal/client').then(({ requestPushNotify }) => {
+                    const me = qc.getQueryData<{ alias?: string }>(['me'])
+                    void requestPushNotify({
+                        toUserId: partnerId,
+                        kind: 'message',
+                        title: me?.alias || 'New message',
+                        body: vars.content.length > 80 ? `${vars.content.slice(0, 80)}…` : vars.content,
+                        matchId: vars.matchId,
+                    })
+                })
+            }
         },
         onError: (e: { response?: { data?: { message?: string } } }, vars, ctx) => {
             if (ctx?.tempId) {

@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useAppStore } from '@/lib/store/useAppStore'
 import { usePresenceStore } from '@/lib/store/usePresenceStore'
 import { useToast } from './useToast'
+import { setActiveChatMatchId, shouldSuppressChatNotification } from '@/lib/onesignal/activeChat'
 
 type ChatHandlers = {
     onNewMessage?: (payload: {
@@ -109,7 +110,27 @@ export function useSocket() {
                     'postgres_changes',
                     { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` },
                     (payload) => {
-                        const row = payload.new as { type?: string; title?: string; body?: string }
+                        const row = payload.new as {
+                            type?: string
+                            title?: string
+                            body?: string
+                            data?: Record<string, string> | string
+                        }
+                        let data: Record<string, string> = {}
+                        if (typeof row.data === 'string') {
+                            try { data = JSON.parse(row.data) } catch { data = {} }
+                        } else if (row.data && typeof row.data === 'object') {
+                            data = row.data
+                        }
+                        const matchId = data.matchId || data.match_id
+                        // Don't toast message alerts while that chat is open
+                        if (
+                            (row.type === 'message' || row.type === 'chat') &&
+                            shouldSuppressChatNotification(matchId)
+                        ) {
+                            qc.invalidateQueries({ queryKey: ['notifications'] })
+                            return
+                        }
                         if (row.type === 'spark' || row.type === 'match') {
                             toastRef.current.success(row.title || "It's a Spark!", row.body || '')
                             qc.invalidateQueries({ queryKey: ['matches'] })
@@ -262,6 +283,7 @@ export function joinChat(
     activeMatchId = matchId
     activeConversationId = conversationId || null
     chatHandlers = handlers
+    setActiveChatMatchId(matchId)
 
     if (chatChannel) {
         supabase.removeChannel(chatChannel)
@@ -316,6 +338,10 @@ export function joinChat(
         .subscribe()
 }
 
+export function getActiveMatchId() {
+    return activeMatchId
+}
+
 export function leaveChat(matchId?: string) {
     const supabase = createClient()
     if (matchId && activeMatchId && matchId !== activeMatchId) return
@@ -330,6 +356,7 @@ export function leaveChat(matchId?: string) {
     activeMatchId = null
     activeConversationId = null
     chatHandlers = {}
+    setActiveChatMatchId(null)
 }
 
 export function emitTyping(
@@ -364,6 +391,7 @@ export function teardownRealtime() {
     onlineChannel = null
     activeMatchId = null
     activeConversationId = null
+    setActiveChatMatchId(null)
     usePresenceStore.getState().reset()
 }
 

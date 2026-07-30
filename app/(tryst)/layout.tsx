@@ -15,6 +15,8 @@ import { useSocket } from '@/lib/hooks/useSocket'
 import { useAutoLocation } from '@/lib/hooks/useGeoLocation'
 import { SelfOnlineBadge } from '@/components/tryst/OnlineStatus'
 import NotificationsBell from '@/components/tryst/NotificationsBell'
+import OneSignalProvider from '@/components/tryst/OneSignalProvider'
+import IncomingCallListener from '@/components/tryst/IncomingCallListener'
 import { useEffect } from 'react'
 
 const mobileNavItems = [
@@ -62,6 +64,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
     return (
         <div className="app-frame min-h-screen">
+            <OneSignalProvider />
+            <IncomingCallListener />
             <MatchModal />
             <DisguiseOverlay />
             <TonightDisguiseBoot />

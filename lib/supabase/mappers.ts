@@ -44,6 +44,7 @@ export interface TrystUser {
     showExactDistance: boolean
     profileComplete: boolean
     googleId: string | null
+    onesignalPlayerId?: string | null
     lastSeen: string | null
     isOnline: boolean
 }
@@ -98,6 +99,7 @@ export function sanitizeUser(u: Record<string, unknown> | null | undefined): Try
         showExactDistance: !!u.show_exact_distance,
         profileComplete: !!u.profile_complete,
         googleId: (u.google_id as string) || null,
+        onesignalPlayerId: (u.onesignal_player_id as string) || null,
         lastSeen,
         isOnline,
     }
@@ -137,6 +139,10 @@ export function toSnakeProfilePatch(data: Record<string, unknown>) {
         profileComplete: 'profile_complete',
         googleId: 'google_id',
         lastSeen: 'last_seen',
+        onesignalPlayerId: 'onesignal_player_id',
+        onesignal_player_id: 'onesignal_player_id',
+        onesignalSubscriptionId: 'onesignal_subscription_id',
+        onesignal_subscription_id: 'onesignal_subscription_id',
     }
     const out: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(data)) {

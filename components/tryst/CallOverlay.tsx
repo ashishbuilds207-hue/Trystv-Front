@@ -83,8 +83,14 @@ export default function CallOverlay({
     const showVideo = mode === 'video' && (phase === 'connected' || phase === 'connecting')
 
     const statusLabel = (() => {
-        if (phase === 'incoming') return `Incoming ${mode} call…`
-        if (phase === 'outgoing') return `Calling ${partnerName}…`
+        if (phase === 'incoming') {
+            return mode === 'video' ? 'Incoming video call…' : 'Incoming audio call…'
+        }
+        if (phase === 'outgoing') {
+            return mode === 'video'
+                ? `Video calling ${partnerName}…`
+                : `Calling ${partnerName}…`
+        }
         if (phase === 'connecting') return 'Connecting…'
         if (onHold) return 'On hold'
         if (muted) return 'Muted'

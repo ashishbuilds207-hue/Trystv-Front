@@ -1,0 +1,43 @@
+---
+description: OneSignal push notifications structure and conventions for TRYST
+globs: lib/onesignal/**/*,components/tryst/OneSignal*.tsx,components/tryst/IncomingCall*.tsx,app/api/onesignal/**/*
+alwaysApply: false
+---
+
+# OneSignal (TRYST)
+
+## Layout
+
+```
+lib/onesignal/
+  config.ts      # NEXT_PUBLIC_ONESIGNAL_APP_ID + REST key
+  types.ts       # Notify kinds / payloads
+  activeChat.ts  # Suppress when match chat is open
+  client.ts      # Browser helpers → /api/onesignal/*
+  server.ts      # REST create notification (server only)
+app/api/onesignal/
+  notify/route.ts    # Send push to external_id
+  register/route.ts  # Save player/subscription ids
+components/tryst/
+  OneSignalProvider.tsx      # Init + permission + suppress
+  IncomingCallListener.tsx   # Global call invite UI
+public/OneSignalSDKWorker.js
+supabase/onesignal_player_id.sql
+```
+
+## Rules
+
+- App ID is public (`NEXT_PUBLIC_ONESIGNAL_APP_ID`). REST API key is **server-only** (`ONESIGNAL_REST_API_KEY`).
+- Never commit real REST keys. Put them only in `.env.local`.
+- External ID = TRYST `users.id` via `OneSignal.login(userId)`.
+- **Suppress**: if `getActiveChatMatchId() === matchId`, do not show push (`foregroundWillDisplay` + skip in-app toast for that chat).
+- Message / audio / video call pushes go through `POST /api/onesignal/notify` after send/startCall.
+- Run `supabase/onesignal_player_id.sql` once so `onesignal_player_id` columns exist.
+
+## Notify kinds
+
+`message` | `audio_call` | `video_call` | `match` | `like` | `generic`
+
+## Permission
+
+Ask once after auth via `OneSignal.Slidedown.promptPush()` (fallback `requestPermission`).

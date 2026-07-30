@@ -33,6 +33,7 @@ export const publicConfig = {
     googleClientId,
     googleMapsApiKey,
     razorpayKeyId,
+    onesignalAppId: process.env.NEXT_PUBLIC_ONESIGNAL_APP_ID || '804274d9-0ff1-428f-a5f7-ae89a23853c6',
     liveAppUrl: LIVE_APP_URL,
     /** @deprecated Express backend removed — kept empty for leftover imports */
     apiUrl: '',
