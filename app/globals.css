@@ -207,21 +207,21 @@ body {
 
 .app-main-header {
     background: var(--tryst-header-bg);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
     border-bottom: 1px solid var(--tryst-border);
     transition: background-color 0.35s ease, border-color 0.35s ease;
 }
 
 .app-canvas {
-    padding: 1rem 1rem 1.5rem;
+    padding: 1.125rem 1.125rem 1.75rem;
     background: var(--tryst-canvas-bg);
     transition: background 0.35s ease;
 }
 
 @media (min-width: 1024px) {
     .app-canvas {
-        padding: 1.25rem 1.5rem 2rem;
+        padding: 1.5rem 1.75rem 2.25rem;
     }
 }
 
@@ -297,7 +297,7 @@ body {
     width: 100%;
     max-width: 42rem;
     margin-inline: auto;
-    padding-inline: 1rem;
+    padding-inline: 1.125rem;
 }
 
 @media (min-width: 1024px) {
@@ -368,12 +368,12 @@ body {
     .tryst-card {
         background: var(--tryst-card);
         border: 1px solid var(--tryst-border);
-        border-radius: 16px;
+        border-radius: 18px;
         transition: background-color 0.35s ease, border-color 0.3s ease, box-shadow 0.3s ease;
     }
 
     .tryst-card:hover {
-        border-color: rgba(192, 57, 43, 0.4);
+        border-color: rgba(192, 57, 43, 0.35);
         box-shadow: var(--tryst-card-hover-shadow);
     }
 
@@ -382,12 +382,13 @@ body {
         color: white;
         font-weight: 600;
         padding: 12px 28px;
-        border-radius: 8px;
+        border-radius: 12px;
         border: none;
         cursor: pointer;
-        transition: all 0.3s ease;
+        transition: transform 0.2s ease, box-shadow 0.25s ease, filter 0.2s ease;
         position: relative;
         overflow: hidden;
+        letter-spacing: 0.01em;
     }
 
     .tryst-button-primary::before {
@@ -566,6 +567,22 @@ body {
     animation: match-reveal 0.8s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
 }
 
+@keyframes party-pop {
+    0% { transform: translate3d(0, 0, 0) rotate(0deg) scale(1); opacity: 1; }
+    100% { transform: translate3d(var(--dx), var(--dy), 0) rotate(220deg) scale(0.4); opacity: 0; }
+}
+
+.party-confetti-piece {
+    position: absolute;
+    top: 42%;
+    left: 50%;
+    width: 8px;
+    height: 5px;
+    border-radius: 1px;
+    pointer-events: none;
+    animation: party-pop 1.6s ease-out forwards;
+}
+
 /* Premium glow */
 .gold-glow {
     box-shadow: 0 0 30px rgba(212, 175, 55, 0.3), 0 0 60px rgba(212, 175, 55, 0.1);
@@ -617,41 +634,69 @@ body {
     background: var(--tryst-input-bg);
     border: 1px solid var(--tryst-border);
     color: var(--tryst-text);
-    border-radius: 10px;
-    padding-top: 12px;
-    padding-bottom: 12px;
-    padding-right: 16px;
-    padding-left: 16px;
-    font-size: 14px;
-    transition: all 0.2s ease;
+    border-radius: 12px;
+    padding: 13px 16px;
+    font-size: 15px;
+    line-height: 1.35;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
     outline: none;
     width: 100%;
+    min-height: 48px;
 }
 
-/* Icon + input row — avoids placeholder overlapping the icon */
+textarea.tryst-input {
+    min-height: 120px;
+    line-height: 1.5;
+}
+
+/* Absolute-icon fallback — wins over base padding so text never sits under icons */
+.tryst-input.pl-9,
+.tryst-input.pl-10,
+.tryst-input.pl-11,
+.tryst-input.pl-12 {
+    padding-left: 2.75rem !important;
+}
+
+.tryst-input.pr-9,
+.tryst-input.pr-10,
+.tryst-input.pr-11,
+.tryst-input.pr-12 {
+    padding-right: 2.75rem !important;
+}
+
+/* Icon + input row — preferred pattern (no overlap) */
 .tryst-input-icon-wrap {
     display: flex;
     align-items: center;
     gap: 12px;
     background: var(--tryst-input-bg);
     border: 1px solid var(--tryst-border);
-    border-radius: 10px;
-    padding: 12px 16px;
-    transition: all 0.2s ease;
+    border-radius: 12px;
+    padding: 0 14px;
+    min-height: 48px;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
     width: 100%;
 }
 
 .tryst-input-icon-wrap:focus-within {
     border-color: #C0392B;
-    box-shadow: 0 0 0 3px rgba(192, 57, 43, 0.15);
+    box-shadow: 0 0 0 3px rgba(192, 57, 43, 0.14);
 }
 
 .tryst-input-icon-wrap .tryst-input-icon {
     flex-shrink: 0;
-    width: 1rem;
-    height: 1rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.125rem;
+    height: 1.125rem;
     color: var(--tryst-muted-2);
     pointer-events: none;
+}
+
+.tryst-input-icon-wrap .tryst-input-icon svg {
+    width: 1.125rem;
+    height: 1.125rem;
 }
 
 .tryst-input-icon-wrap .tryst-input-field {
@@ -661,8 +706,9 @@ body {
     border: none;
     outline: none;
     color: var(--tryst-text);
-    font-size: 14px;
-    padding: 0;
+    font-size: 15px;
+    line-height: 1.35;
+    padding: 13px 0;
     width: 100%;
 }
 
@@ -678,11 +724,19 @@ body {
 
 .tryst-input:focus {
     border-color: #C0392B;
-    box-shadow: 0 0 0 3px rgba(192, 57, 43, 0.15);
+    box-shadow: 0 0 0 3px rgba(192, 57, 43, 0.14);
 }
 
 .tryst-input::placeholder {
     color: var(--tryst-muted-2);
+}
+
+select.tryst-input {
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239A9288' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    padding-right: 2.5rem;
 }
 
 /* Loading spinner */
@@ -4139,8 +4193,10 @@ body {
 /* Mobile bottom nav */
 .mobile-nav {
     background: var(--tryst-mobile-nav-bg);
-    backdrop-filter: blur(20px);
+    backdrop-filter: blur(22px);
+    -webkit-backdrop-filter: blur(22px);
     border-top: 1px solid var(--tryst-border);
+    box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.06);
     transition: background-color 0.35s ease, border-color 0.35s ease;
 }
 

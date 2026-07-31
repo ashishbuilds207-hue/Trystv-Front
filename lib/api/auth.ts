@@ -95,6 +95,7 @@ export const authApi = {
         relationshipStatus: string; desireTags: string[]; profession?: string; city?: string
         country?: string; latitude?: number | null; longitude?: number | null
         googleId?: string; avatarUrl?: string; freshStart?: boolean
+        bio?: string; seeking?: string
     }) => {
         const authUser = await requireUid()
         const patch: Record<string, unknown> = {
@@ -111,6 +112,8 @@ export const authApi = {
             profile_complete: true,
             last_seen: new Date().toISOString(),
         }
+        if (payload.bio != null) patch.bio = payload.bio
+        if (payload.seeking) patch.seeking = payload.seeking
         if (payload.country) patch.country = payload.country
         if (payload.latitude != null && Number.isFinite(payload.latitude)) patch.latitude = payload.latitude
         if (payload.longitude != null && Number.isFinite(payload.longitude)) patch.longitude = payload.longitude
@@ -124,7 +127,7 @@ export const authApi = {
         }
 
         const { data: existing } = await sb().from('users').select('id, alias').eq('id', authUser.id).maybeSingle()
-        const resumed = !!existing?.alias && existing.alias !== 'NewUser'
+        const resumed = !!existing?.alias && existing.alias !== 'NewUser' && existing.alias !== ''
 
         const { data, error } = await sb().from('users').upsert({
             id: authUser.id,

@@ -48,8 +48,8 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
     ) => {
         const Comp = asChild ? Slot : 'input'
         const [fieldType, setFieldType] = React.useState(type)
-        const isIconLeft = iconLeft ? 'pl-9' : ''
-        const isIconRight = iconLeft ? 'pr-9' : ''
+        const padLeft = iconLeft ? 'pl-10' : ''
+        const padRight = iconRight || type === 'password' ? 'pr-10' : ''
 
         return (
             <div className="relative">
@@ -60,8 +60,8 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
                             variant,
                             className,
                         }),
-                        isIconLeft,
-                        isIconRight,
+                        padLeft,
+                        padRight,
                     )}
                     ref={ref}
                     {...props}
@@ -69,7 +69,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
                 {!!iconLeft && (
                     <span
                         className={cn(
-                            'text-grey peer-focus:text-dark pointer-events-none absolute left-0 top-0 flex h-9 w-9 items-center justify-center',
+                            'text-grey peer-focus:text-dark pointer-events-none absolute left-0 top-0 flex items-center justify-center',
                             small ? 'h-[30px] w-[30px]' : 'h-9 w-9',
                         )}
                     >

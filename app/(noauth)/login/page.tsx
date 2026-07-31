@@ -131,12 +131,19 @@ function LoginContent() {
                 </div>
             </div>
 
-            <div className="flex-1 lg:max-w-lg flex flex-col items-center justify-center p-8 lg:p-12">
-                <div className="lg:hidden mb-10">
+            <div className="flex-1 lg:max-w-lg flex flex-col items-center justify-center p-6 sm:p-8 lg:p-12 relative">
+                <div
+                    className="pointer-events-none absolute inset-0 opacity-60 lg:hidden"
+                    style={{
+                        background:
+                            'radial-gradient(ellipse 70% 40% at 50% 0%, rgba(192,57,43,0.16), transparent 55%)',
+                    }}
+                />
+                <div className="lg:hidden mb-10 relative z-10">
                     <TrystLogo href="/" size="md" />
                 </div>
 
-                <div className="w-full max-w-sm">
+                <div className="w-full max-w-sm relative z-10 rounded-2xl border border-tryst-border/70 bg-tryst-card/80 backdrop-blur-md p-6 sm:p-7 shadow-[0_20px_60px_rgba(0,0,0,0.12)] lg:border-0 lg:bg-transparent lg:backdrop-blur-none lg:p-0 lg:shadow-none">
                     {step === 'email' ? (
                         <>
                             <div className="mb-8">

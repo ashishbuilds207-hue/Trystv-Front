@@ -31,7 +31,8 @@ export default function LikesView() {
             const { data } = await swipe.mutateAsync({ targetId: p.id, direction: p.isSuper ? 'super' : 'like' })
             if (data.data.matched && data.data.matchId) {
                 flash(`It's a match with ${p.alias}!`)
-                router.push(`/chat?match=${data.data.matchId}`)
+                // Let party celebration play, then open chat
+                setTimeout(() => router.push(`/chat?match=${data.data.matchId}`), 2200)
             } else {
                 flash(`You sparked ${p.alias} back`)
             }

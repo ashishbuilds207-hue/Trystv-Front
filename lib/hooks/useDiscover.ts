@@ -24,13 +24,23 @@ export function useDiscoverProfiles() {
 
 export function useSwipe() {
     const qc = useQueryClient()
+    const { triggerMatchAnimation } = useAppStore()
     return useMutation({
         mutationFn: ({ targetId, direction }: { targetId: string; direction: 'like' | 'pass' | 'super' }) =>
             matchApi.swipe(targetId, direction),
-        onSuccess: ({ data }) => {
+        onSuccess: ({ data }, { targetId }) => {
             qc.invalidateQueries({ queryKey: ['likes'] })
             if (data.data.matched) {
                 qc.invalidateQueries({ queryKey: ['matches'] })
+                const discover = qc.getQueryData<{ pages: DiscoverProfile[][] }>(['discover'])
+                const fromDiscover = discover?.pages?.flat().find((p) => p.id === targetId)
+                const likes = qc.getQueryData<IncomingLike[]>(['likes'])
+                const fromLikes = likes?.find((p) => p.id === targetId)
+                const payload = data.data as { alias?: string; targetAlias?: string; avatarUrl?: string }
+                triggerMatchAnimation({
+                    alias: fromDiscover?.alias || fromLikes?.alias || payload.targetAlias || payload.alias || 'Someone special',
+                    avatarUrl: fromDiscover?.avatarUrl || fromLikes?.avatarUrl || payload.avatarUrl || '',
+                })
             }
         },
     })

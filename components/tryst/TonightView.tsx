@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
+import { motion } from 'framer-motion'
 import {
     Flame, Moon, Sun, TrendingUp, Lock, Loader2, Send, Ghost, Newspaper,
     Camera, Mic, Video, Heart, MessageCircle, Eye, EyeOff, Sparkles, ChevronRight,
@@ -80,7 +81,12 @@ export default function TonightView() {
     )
 
     return (
-        <div className="page-content pb-28 page-transition max-w-2xl mx-auto">
+        <motion.div
+            className="page-content pb-28 page-transition max-w-2xl mx-auto"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35 }}
+        >
             {/* Header */}
             <div className="flex items-start justify-between gap-3 py-4 mb-1">
                 <div className="min-w-0">
@@ -365,6 +371,6 @@ export default function TonightView() {
             )}
 
             <DisguisePickerModal open={showDisguisePicker} onClose={() => setShowDisguisePicker(false)} onSelect={activateDisguise} />
-        </div>
+        </motion.div>
     )
 }
