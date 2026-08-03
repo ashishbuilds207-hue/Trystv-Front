@@ -18,13 +18,19 @@ interface AppState {
     activeDisguiseSkin: string
     hasSeenDisguiseIntro: boolean
     hasSeenDisguiseActiveCoach: boolean
+    hasSeenGhostIntro: boolean
+    ghostIntroOpen: boolean
     showMatchAnimation: boolean
     matchedProfile: { alias: string; avatarUrl: string } | null
 
     // Actions
     setAuthenticated: (v: boolean) => void
     setCurrentUser: (id: string, token: string) => void
+    setGhostMode: (on: boolean) => void
     toggleGhostMode: () => void
+    openGhostIntro: () => void
+    closeGhostIntro: () => void
+    markGhostIntroSeen: () => void
     toggleNightMode: () => void
     toggleOrbitAvatarMode: () => void
     setOrbitGuideOpen: (open: boolean) => void
@@ -55,6 +61,8 @@ export const useAppStore = create<AppState>()(
             activeDisguiseSkin: 'newspaper',
             hasSeenDisguiseIntro: false,
             hasSeenDisguiseActiveCoach: false,
+            hasSeenGhostIntro: false,
+            ghostIntroOpen: false,
             showMatchAnimation: false,
             matchedProfile: null,
 
@@ -66,7 +74,15 @@ export const useAppStore = create<AppState>()(
                 accessToken: token,
             }),
 
+            setGhostMode: (on) => set({ isGhostMode: on }),
+
             toggleGhostMode: () => set((s) => ({ isGhostMode: !s.isGhostMode })),
+
+            openGhostIntro: () => set({ ghostIntroOpen: true }),
+
+            closeGhostIntro: () => set({ ghostIntroOpen: false }),
+
+            markGhostIntroSeen: () => set({ hasSeenGhostIntro: true }),
 
             toggleNightMode: () => set((s) => ({ isNightMode: !s.isNightMode })),
 
@@ -99,7 +115,14 @@ export const useAppStore = create<AppState>()(
                     localStorage.removeItem('tryst_token')
                     localStorage.removeItem('tryst_refresh')
                 }
-                set({ isAuthenticated: false, currentUserId: null, accessToken: null })
+                set({
+                    isAuthenticated: false,
+                    currentUserId: null,
+                    accessToken: null,
+                    isGhostMode: false,
+                    ghostIntroOpen: false,
+                    disguiseModeEnabled: false,
+                })
             },
         }),
         {
@@ -115,6 +138,7 @@ export const useAppStore = create<AppState>()(
                 activeDisguiseSkin: s.activeDisguiseSkin,
                 hasSeenDisguiseIntro: s.hasSeenDisguiseIntro,
                 hasSeenDisguiseActiveCoach: s.hasSeenDisguiseActiveCoach,
+                hasSeenGhostIntro: s.hasSeenGhostIntro,
             }),
         }
     )

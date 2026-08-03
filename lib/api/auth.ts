@@ -9,6 +9,7 @@ import {
     orbitRingForDistance,
     roundDistanceKm,
 } from '@/lib/geo/distance'
+import { normalizeEmail, normalizePhone } from '@/lib/auth/contact'
 
 function sb() {
     const client = createClient()
@@ -28,49 +29,186 @@ async function getProfileRow(id?: string) {
     return data
 }
 
+/** Owners who hid their profile from the current viewer (matched email/phone). */
+async function getHiddenOwnerIds(viewerId: string): Promise<Set<string>> {
+    try {
+        const { data, error } = await sb().rpc('owners_hidden_from_me', { p_viewer_id: viewerId })
+        if (!error && Array.isArray(data)) return new Set(data as string[])
+    } catch {
+        /* RPC missing until SQL applied */
+    }
+    // Fallback: client-side match against hide table (RLS only returns own rows — use service pattern via select as viewer won't see others' lists)
+    // Without RPC, skip hide filtering silently
+    return new Set()
+}
+
+export const hideApi = {
+    list: async () => {
+        const me = await requireUid()
+        const { data, error } = await sb()
+            .from('profile_hide_entries')
+            .select('*')
+            .eq('owner_id', me.id)
+            .order('created_at', { ascending: false })
+        if (error) fail(error.message, 500)
+        return ok({
+            entries: (data || []).map((r) => ({
+                id: r.id,
+                contactType: r.contact_type as 'email' | 'phone',
+                contactValue: r.contact_value,
+                note: r.note,
+                createdAt: r.created_at,
+            })),
+        })
+    },
+
+    add: async (raw: string, note?: string) => {
+        const me = await requireUid()
+        const email = normalizeEmail(raw)
+        const phone = normalizePhone(raw)
+        if (!email && !phone) fail('Enter a valid email or phone number', 400)
+
+        const contactType = email ? 'email' : 'phone'
+        const contactValue = email || phone!
+
+        const { data, error } = await sb()
+            .from('profile_hide_entries')
+            .upsert(
+                {
+                    owner_id: me.id,
+                    contact_type: contactType,
+                    contact_value: contactValue,
+                    note: note?.trim() || null,
+                },
+                { onConflict: 'owner_id,contact_type,contact_value' },
+            )
+            .select('*')
+            .single()
+        if (error) fail(error.message, 400)
+        return ok({
+            entry: {
+                id: data.id,
+                contactType: data.contact_type,
+                contactValue: data.contact_value,
+                note: data.note,
+                createdAt: data.created_at,
+            },
+        })
+    },
+
+    /** Add many contacts at once. Each item needs email and/or phone. */
+    addMany: async (
+        items: { email?: string; phone?: string; note?: string }[],
+    ) => {
+        const me = await requireUid()
+        const rows: {
+            owner_id: string
+            contact_type: 'email' | 'phone'
+            contact_value: string
+            note: string | null
+        }[] = []
+
+        for (const item of items) {
+            const email = normalizeEmail(item.email)
+            const phone = normalizePhone(item.phone)
+            if (!email && !phone) fail('Each contact needs a valid email or phone', 400)
+            const note = item.note?.trim() || null
+            if (email) {
+                rows.push({
+                    owner_id: me.id,
+                    contact_type: 'email',
+                    contact_value: email,
+                    note,
+                })
+            }
+            if (phone) {
+                rows.push({
+                    owner_id: me.id,
+                    contact_type: 'phone',
+                    contact_value: phone,
+                    note,
+                })
+            }
+        }
+        if (!rows.length) fail('Add at least one email or phone', 400)
+
+        const { data, error } = await sb()
+            .from('profile_hide_entries')
+            .upsert(rows, { onConflict: 'owner_id,contact_type,contact_value' })
+            .select('*')
+        if (error) fail(error.message, 400)
+        return ok({
+            count: data?.length || rows.length,
+            entries: (data || []).map((r) => ({
+                id: r.id,
+                contactType: r.contact_type,
+                contactValue: r.contact_value,
+                note: r.note,
+                createdAt: r.created_at,
+            })),
+        })
+    },
+
+    remove: async (id: string) => {
+        const me = await requireUid()
+        const { error } = await sb()
+            .from('profile_hide_entries')
+            .delete()
+            .eq('id', id)
+            .eq('owner_id', me.id)
+        if (error) fail(error.message, 400)
+        return ok({ deleted: true })
+    },
+}
+
 export const authApi = {
-    /** Resend-powered 6-digit OTP (branded TRYST email) */
-    sendOtp: async (email: string, purpose: 'login' | 'register' = 'login') => {
+    /** Email and/or phone OTP */
+    sendOtp: async (
+        input: string | { email?: string; phone?: string; purpose?: 'login' | 'register' },
+        purpose: 'login' | 'register' = 'login',
+    ) => {
+        const body =
+            typeof input === 'string'
+                ? { email: input.trim().toLowerCase(), purpose }
+                : {
+                      email: input.email?.trim().toLowerCase(),
+                      phone: input.phone,
+                      purpose: input.purpose || purpose,
+                  }
         const res = await fetch('/api/auth/send-otp', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: email.trim().toLowerCase(), purpose }),
+            body: JSON.stringify(body),
         })
         const json = await res.json()
-        if (!res.ok) fail(json.message || 'Could not send code', res.status)
+        if (!res.ok) fail(json.message || 'Could not send code', res.status, json)
         return ok(json.data || { otpMode: 'email' })
     },
 
-    verifyOtp: async (email: string, otp: string) => {
+    verifyOtp: async (input: { email?: string; phone?: string; otp: string } | string, otpArg?: string) => {
+        const body =
+            typeof input === 'string'
+                ? { email: input.trim().toLowerCase(), otp: otpArg || '' }
+                : {
+                      email: input.email?.trim().toLowerCase(),
+                      phone: input.phone,
+                      otp: input.otp,
+                  }
         const res = await fetch('/api/auth/verify-otp', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: email.trim().toLowerCase(), otp }),
+            body: JSON.stringify(body),
         })
         const json = await res.json()
         if (!res.ok) fail(json.message || 'Invalid code', res.status)
-
-        const accessToken = json.data?.accessToken as string | undefined
-        const refreshToken = json.data?.refreshToken as string | undefined
-        if (!accessToken || !refreshToken) fail('Missing session', 500)
-
-        const { data, error } = await sb().auth.setSession({
-            access_token: accessToken,
-            refresh_token: refreshToken,
-        })
-        if (error) fail(error.message, 400)
-
-        if (json.data?.isNew) {
-            return ok({ isNew: true as const, email: email.trim().toLowerCase() })
+        if (json.data?.accessToken) {
+            const supabase = createClient()
+            await supabase.auth.setSession({
+                access_token: json.data.accessToken,
+                refresh_token: json.data.refreshToken,
+            })
         }
-
-        const profile = await getProfileRow(data.user?.id)
-        return ok({
-            isNew: false as const,
-            accessToken,
-            refreshToken,
-            user: sanitizeUser(profile),
-        })
+        return ok(json.data)
     },
 
     /** Optional: Supabase magic link (uses Supabase mail / SMTP) */
@@ -95,15 +233,17 @@ export const authApi = {
         relationshipStatus: string; desireTags: string[]; profession?: string; city?: string
         country?: string; latitude?: number | null; longitude?: number | null
         googleId?: string; avatarUrl?: string; freshStart?: boolean
-        bio?: string; seeking?: string
+        bio?: string; seeking?: string; phone?: string
     }) => {
         const authUser = await requireUid()
+        const phone = payload.phone ? normalizePhone(payload.phone) : null
         const patch: Record<string, unknown> = {
             alias: payload.alias,
             age: payload.age,
             gender: payload.gender,
             relationship_status: payload.relationshipStatus,
             desire_tags: payload.desireTags || [],
+            is_ghost_mode: false,
             profession: payload.profession || null,
             city: payload.city || null,
             email: payload.email.trim().toLowerCase(),
@@ -112,6 +252,7 @@ export const authApi = {
             profile_complete: true,
             last_seen: new Date().toISOString(),
         }
+        if (phone) patch.phone = phone
         if (payload.bio != null) patch.bio = payload.bio
         if (payload.seeking) patch.seeking = payload.seeking
         if (payload.country) patch.country = payload.country
@@ -248,6 +389,8 @@ export const userApi = {
         const { data: swiped } = await sb().from('swipes').select('swiped_id').eq('swiper_id', me.id)
         const exclude = new Set((swiped || []).map((s) => s.swiped_id))
         exclude.add(me.id)
+        const hidden = await getHiddenOwnerIds(me.id)
+        hidden.forEach((id) => exclude.add(id))
 
         const seeking = (profile?.seeking as string) || 'Everyone'
         const ageMin = (profile?.age_pref_min as number) ?? 18
@@ -313,6 +456,11 @@ export const userApi = {
         if (id) {
             const me = await requireUid()
             if (me.id !== id) {
+                const { data: hidden } = await sb().rpc('profile_hidden_from_viewer', {
+                    p_owner_id: id,
+                    p_viewer_id: me.id,
+                })
+                if (hidden === true) fail('User not found', 404)
                 await sb().from('profile_views').insert({ viewer_id: me.id, viewed_id: id })
             }
         }
@@ -549,6 +697,7 @@ export const matchApi = {
 
     getLikes: async () => {
         const me = await requireUid()
+        const hidden = await getHiddenOwnerIds(me.id)
         const { data: incoming } = await sb()
             .from('swipes')
             .select('swiper_id, direction, created_at')
@@ -561,6 +710,7 @@ export const matchApi = {
         const likes = []
         for (const s of incoming || []) {
             if (swiped.has(s.swiper_id)) continue
+            if (hidden.has(s.swiper_id)) continue
             const { data: u } = await sb().from('users').select('*').eq('id', s.swiper_id).single()
             if (!u) continue
             likes.push({
@@ -772,6 +922,8 @@ export const orbitApi = {
         const { data: swiped } = await sb().from('swipes').select('swiped_id').eq('swiper_id', me.id)
         const exclude = new Set((swiped || []).map((s) => s.swiped_id))
         exclude.add(me.id)
+        const hidden = await getHiddenOwnerIds(me.id)
+        hidden.forEach((id) => exclude.add(id))
 
         const seeking = (profile?.seeking as string) || 'Everyone'
         const ageMin = (profile?.age_pref_min as number) ?? 18
@@ -909,6 +1061,7 @@ export const pulseApi = {
     },
     getPeople: async () => {
         const me = await requireUid()
+        const hidden = await getHiddenOwnerIds(me.id)
         const { data } = await sb()
             .from('users')
             .select('*')
@@ -918,7 +1071,9 @@ export const pulseApi = {
             .limit(30)
         const { data: mySwipes } = await sb().from('swipes').select('swiped_id').eq('swiper_id', me.id)
         const sent = new Set((mySwipes || []).map((s) => s.swiped_id))
-        const people = (data || []).map((u) => ({
+        const people = (data || [])
+            .filter((u) => !hidden.has(u.id))
+            .map((u) => ({
             id: u.id,
             alias: u.alias,
             city: u.city,

@@ -2,8 +2,10 @@
 
 /**
  * Dating-style signup:
- * 1) Email → OTP
- * 2) Stepped profile: basics → location → intent → interests → bio → photos (min 2) → review
+ * 1) Email and/or phone → OTP
+ * 2) OTP verify creates the account (contact locked)
+ * 3) Profile stepper starts — email/phone already filled, no re-entry
+ * Progress autosaves; returning users resume at the first incomplete step.
  */
 
 import { useState, useEffect, useRef, useMemo } from 'react'
@@ -17,6 +19,7 @@ import {
     Coffee, Headphones, Bike, Waves, Flame, Leaf, ShoppingBag, Mic2, Laugh,
     Moon, Sun, Tent, Drama, Languages, ChefHat, Flower2, Guitar, Dices, Tv,
     Car, Footprints, TreePine, Anchor, Brush, PartyPopper, Shirt, Pizza, Film,
+    Phone,
 } from 'lucide-react'
 import { TrystLogo } from '@/components/tryst/TrystLogo'
 import { IconInput } from '@/components/tryst/IconInput'
@@ -28,9 +31,19 @@ import { formatOtpSendError, getApiErrorMessage } from '@/lib/api/errors'
 import { OtpErrorBanner } from '@/components/auth/OtpErrorBanner'
 import { OtpDeliveryBanner } from '@/components/auth/OtpSentBanner'
 import type { OtpDeliveryMode } from '@/components/auth/OtpSentBanner'
+import { VerifiedContactCard } from '@/components/auth/VerifiedContactCard'
 import { createClient } from '@/lib/supabase/client'
 import { userApi } from '@/lib/api/auth'
 import { useToast } from '@/lib/hooks/useToast'
+import { isValidPhone, normalizePhone, phoneAuthEmail } from '@/lib/auth/contact'
+import {
+    clearRegisterDraft,
+    computeResumeStep,
+    formFromUserRow,
+    loadRegisterDraft,
+    saveRegisterDraft,
+    type RegisterDraftForm,
+} from '@/lib/auth/registerDraft'
 import {
     detectGpsPlace,
     resolveCityPlace,
@@ -38,9 +51,10 @@ import {
     type LocationSuggestion,
 } from '@/lib/geo/deviceLocation'
 
-type Gate = 'email' | 'otp' | 'profile'
+type Gate = 'contact' | 'otp' | 'profile'
 type Intent = 'long-term' | 'short-term' | 'casual' | 'friendship' | 'open-to-all'
 type Seeking = 'women' | 'men' | 'everyone'
+type ContactMode = 'email' | 'phone' | 'both'
 
 const PROFILE_STEPS = [
     { id: 1, label: 'Basics', weight: 15 },
@@ -139,7 +153,8 @@ export default function RegisterPage() {
     const sendOtp = useSendOtp()
     const verifyOtp = useVerifyOtp()
 
-    const [gate, setGate] = useState<Gate>('email')
+    const [gate, setGate] = useState<Gate>('contact')
+    const [contactMode, setContactMode] = useState<ContactMode>('email')
     const [step, setStep] = useState(1)
     const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', ''])
     const [sendError, setSendError] = useState('')
@@ -147,15 +162,23 @@ export default function RegisterPage() {
     const [shownOtp, setShownOtp] = useState<string | null>(null)
     const [otpEmailSent, setOtpEmailSent] = useState(false)
     const [otpEmailError, setOtpEmailError] = useState<string | null>(null)
+    const [verifiedEmail, setVerifiedEmail] = useState('')
+    const [verifiedPhone, setVerifiedPhone] = useState('')
     const [googleSignup, setGoogleSignup] = useState<GoogleUserData | null>(null)
     const [photoUrls, setPhotoUrls] = useState<string[]>([])
     const [uploading, setUploading] = useState(false)
+    const [bootLoading, setBootLoading] = useState(true)
+    const [resumed, setResumed] = useState(false)
+    const [savingDraft, setSavingDraft] = useState(false)
     const photoInputRef = useRef<HTMLInputElement>(null)
+    const userIdRef = useRef<string | null>(null)
+    const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
     const [form, setForm] = useState({
         alias: '',
         age: '',
         email: '',
+        phone: '',
         gender: '' as 'female' | 'male' | 'non-binary' | '',
         intent: '' as Intent | '',
         seeking: '' as Seeking | '',
@@ -182,6 +205,69 @@ export default function RegisterPage() {
 
     const updateForm = (key: keyof typeof form, value: unknown) => setForm((p) => ({ ...p, [key]: value }))
 
+    const draftFormSnapshot = (): RegisterDraftForm => ({
+        alias: form.alias,
+        age: form.age,
+        email: form.email,
+        phone: form.phone,
+        gender: form.gender,
+        intent: form.intent,
+        seeking: form.seeking,
+        interests: form.interests,
+        bio: form.bio,
+        profession: form.profession,
+        city: form.city,
+        country: form.country,
+        latitude: form.latitude,
+        longitude: form.longitude,
+    })
+
+    const writeLocalDraft = (nextStep: number, nextForm?: RegisterDraftForm) => {
+        const uid = userIdRef.current
+        if (!uid) return
+        saveRegisterDraft({
+            userId: uid,
+            step: nextStep,
+            form: nextForm || draftFormSnapshot(),
+            updatedAt: Date.now(),
+        })
+    }
+
+    /** Save filled fields to DB (profile stays incomplete until final submit). */
+    const persistProgressToDb = async (snapshot: RegisterDraftForm, photos: string[]) => {
+        const patch: Record<string, unknown> = {
+            profileComplete: false,
+        }
+        if (snapshot.alias.trim().length >= 2) patch.alias = snapshot.alias.trim()
+        if (Number(snapshot.age) >= 18) patch.age = Number(snapshot.age)
+        if (snapshot.gender) patch.gender = snapshot.gender
+        if (snapshot.city.trim()) patch.city = snapshot.city.trim()
+        if (snapshot.country) patch.country = snapshot.country
+        if (snapshot.latitude != null) patch.latitude = snapshot.latitude
+        if (snapshot.longitude != null) patch.longitude = snapshot.longitude
+        if (snapshot.intent) patch.relationshipStatus = snapshot.intent
+        if (snapshot.seeking) {
+            patch.seeking =
+                snapshot.seeking === 'women' ? 'Women' : snapshot.seeking === 'men' ? 'Men' : 'Everyone'
+        }
+        if (snapshot.interests.length) patch.desireTags = snapshot.interests
+        if (snapshot.bio.trim()) patch.bio = snapshot.bio.trim()
+        if (snapshot.profession.trim()) patch.profession = snapshot.profession.trim()
+        const phone = normalizePhone(snapshot.phone)
+        if (phone) patch.phone = phone
+        if (isValidEmail(snapshot.email)) patch.email = snapshot.email.trim().toLowerCase()
+        if (photos[0]) patch.avatarUrl = photos[0]
+
+        try {
+            setSavingDraft(true)
+            await userApi.updateProfile(patch)
+        } catch {
+            /* local draft still keeps progress */
+        } finally {
+            setSavingDraft(false)
+        }
+    }
+
     const completion = useMemo(() => {
         let pct = 0
         if (form.alias.length >= 2 && form.age && form.gender) pct += 15
@@ -197,62 +283,148 @@ export default function RegisterPage() {
         return Math.min(100, pct)
     }, [form, photoUrls.length, gate, step])
 
-    // Boot: session / google / saved email
+    // Boot: session → restore unfinished profile at the right step
     useEffect(() => {
         const params = new URLSearchParams(window.location.search)
         const source = params.get('source')
         const saved = sessionStorage.getItem('tryst_email')
+        const savedPhone = sessionStorage.getItem('tryst_phone')
 
-        createClient().auth.getSession().then(async ({ data }) => {
-            if (data.session?.user) {
-                setGate('profile')
-                setAuthenticated(true)
-                if (data.session.user.email) {
-                    setForm((p) => ({ ...p, email: data.session!.user.email! }))
+        let cancelled = false
+
+        ;(async () => {
+            try {
+                if (source === 'google' || source === 'magic') {
+                    const raw = sessionStorage.getItem('tryst_google_data')
+                    if (raw) {
+                        try {
+                            const data = JSON.parse(raw) as GoogleUserData
+                            if (!cancelled) {
+                                setGoogleSignup(data)
+                                setForm((p) => ({ ...p, email: data.email || p.email, alias: p.alias || '' }))
+                            }
+                        } catch { /* ignore */ }
+                    }
                 }
+
+                const { data } = await createClient().auth.getSession()
+                if (cancelled) return
+
+                if (!data.session?.user) {
+                    if (saved) {
+                        setForm((p) => ({ ...p, email: saved }))
+                        setContactMode(savedPhone ? 'both' : 'email')
+                    }
+                    if (savedPhone) {
+                        setForm((p) => ({ ...p, phone: savedPhone }))
+                        if (!saved) setContactMode('phone')
+                    }
+                    setGate('contact')
+                    return
+                }
+
                 const uid = data.session.user.id
+                userIdRef.current = uid
+                setAuthenticated(true)
+
+                const empty: RegisterDraftForm = {
+                    alias: '',
+                    age: '',
+                    email:
+                        data.session.user.email && !data.session.user.email.endsWith('@phone.tryst.app')
+                            ? data.session.user.email
+                            : saved || '',
+                    phone: savedPhone || '',
+                    gender: '',
+                    intent: '',
+                    seeking: '',
+                    interests: [],
+                    bio: '',
+                    profession: '',
+                    city: '',
+                    country: '',
+                    latitude: null,
+                    longitude: null,
+                }
+
                 const { data: row } = await createClient()
                     .from('users')
-                    .select('photo_urls, alias, age, gender, bio, seeking, desire_tags, city, country, latitude, longitude, profession, relationship_status')
+                    .select(
+                        'photo_urls, alias, age, gender, bio, seeking, desire_tags, city, country, latitude, longitude, profession, relationship_status, phone, email, profile_complete',
+                    )
                     .eq('id', uid)
                     .maybeSingle()
-                if (row?.photo_urls) setPhotoUrls((row.photo_urls as string[]) || [])
-                if (row) {
-                    setForm((p) => ({
-                        ...p,
-                        alias: (row.alias as string) || p.alias,
-                        age: row.age ? String(row.age) : p.age,
-                        gender: (row.gender as typeof p.gender) || p.gender,
-                        bio: (row.bio as string) || p.bio,
-                        profession: (row.profession as string) || p.profession,
-                        city: (row.city as string) || p.city,
-                        country: (row.country as string) || p.country,
-                        latitude: (row.latitude as number) ?? p.latitude,
-                        longitude: (row.longitude as number) ?? p.longitude,
-                        interests: Array.isArray(row.desire_tags) && row.desire_tags.length
-                            ? (row.desire_tags as string[])
-                            : p.interests,
-                        seeking: normalizeSeeking(row.seeking as string) || p.seeking,
-                        intent: normalizeIntent(row.relationship_status as string) || p.intent,
-                    }))
-                }
-            } else if (saved) {
-                setForm((p) => ({ ...p, email: saved }))
-            }
-        })
 
-        if (source === 'google' || source === 'magic') {
-            const raw = sessionStorage.getItem('tryst_google_data')
-            if (raw) {
-                try {
-                    const data = JSON.parse(raw) as GoogleUserData
-                    setGoogleSignup(data)
-                    setForm((p) => ({ ...p, email: data.email || p.email, alias: p.alias || '' }))
-                    setGate('profile')
-                } catch { /* ignore */ }
+                if (cancelled) return
+
+                if (row?.profile_complete && (row.alias as string)?.trim() && row.alias !== 'NewUser') {
+                    clearRegisterDraft()
+                    router.replace('/tonight')
+                    return
+                }
+
+                const draft = loadRegisterDraft(uid)
+                let nextForm = formFromUserRow((row || {}) as Record<string, unknown>, empty)
+                if (draft?.form) {
+                    // Prefer draft for fields the user typed but may not have synced yet
+                    nextForm = {
+                        ...nextForm,
+                        ...Object.fromEntries(
+                            Object.entries(draft.form).filter(([, v]) => {
+                                if (Array.isArray(v)) return v.length > 0
+                                if (typeof v === 'string') return v.trim().length > 0
+                                return v != null
+                            }),
+                        ),
+                    } as RegisterDraftForm
+                }
+
+                const photos = (row?.photo_urls as string[]) || []
+                const nextStep = computeResumeStep(nextForm, photos.length)
+
+                setForm(nextForm)
+                setPhotoUrls(photos)
+                setStep(nextStep)
+                setGate('profile')
+                const ve =
+                    nextForm.email && !nextForm.email.endsWith('@phone.tryst.app') ? nextForm.email : ''
+                const vp = nextForm.phone || ''
+                setVerifiedEmail(ve)
+                setVerifiedPhone(vp)
+                saveRegisterDraft({
+                    userId: uid,
+                    step: nextStep,
+                    form: nextForm,
+                    updatedAt: Date.now(),
+                })
+
+                if (nextStep > 1 || photos.length > 0 || nextForm.alias.trim().length >= 2) {
+                    setResumed(true)
+                    toast.info('Welcome back', `Continuing at step ${nextStep} — your details are saved`)
+                }
+            } finally {
+                if (!cancelled) setBootLoading(false)
             }
+        })()
+
+        return () => {
+            cancelled = true
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- boot once
     }, [])
+
+    // Autosave draft while editing profile steps
+    useEffect(() => {
+        if (gate !== 'profile' || !userIdRef.current || bootLoading) return
+        if (draftTimer.current) clearTimeout(draftTimer.current)
+        draftTimer.current = setTimeout(() => {
+            writeLocalDraft(step)
+        }, 400)
+        return () => {
+            if (draftTimer.current) clearTimeout(draftTimer.current)
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [form, step, photoUrls, gate, bootLoading])
 
     // GPS on location step
     useEffect(() => {
@@ -310,12 +482,41 @@ export default function RegisterPage() {
     }, [form.city, form.country, form.latitude, form.longitude, gate, step])
 
     const handleSendOtp = async () => {
-        if (!isValidEmail(form.email)) return
+        const wantEmail = contactMode === 'email' || contactMode === 'both'
+        const wantPhone = contactMode === 'phone' || contactMode === 'both'
+        const emailOk = wantEmail && isValidEmail(form.email)
+        const phoneNorm = wantPhone ? normalizePhone(form.phone) : null
+
+        if (wantEmail && !emailOk) {
+            setSendError('Enter a valid email')
+            return
+        }
+        if (wantPhone && !phoneNorm) {
+            setSendError('Enter a valid phone number')
+            return
+        }
+        if (!emailOk && !phoneNorm) return
+
         setSendError('')
         try {
-            const email = form.email.trim().toLowerCase()
-            sessionStorage.setItem('tryst_email', email)
-            const res = await sendOtp.mutateAsync({ email, purpose: 'register' })
+            const email = emailOk ? form.email.trim().toLowerCase() : undefined
+            // Lock contact to what they chose for this OTP
+            setForm((p) => ({
+                ...p,
+                email: wantEmail ? (email || p.email) : '',
+                phone: wantPhone ? (phoneNorm || p.phone) : '',
+            }))
+
+            if (email) sessionStorage.setItem('tryst_email', email)
+            else sessionStorage.removeItem('tryst_email')
+            if (phoneNorm) sessionStorage.setItem('tryst_phone', phoneNorm)
+            else sessionStorage.removeItem('tryst_phone')
+
+            const res = await sendOtp.mutateAsync({
+                email,
+                phone: phoneNorm || undefined,
+                purpose: 'register',
+            })
             const payload = res.data?.data as {
                 otpMode?: OtpDeliveryMode
                 otp?: string
@@ -326,6 +527,7 @@ export default function RegisterPage() {
             setShownOtp(payload?.otp || null)
             setOtpEmailSent(!!payload?.emailSent)
             setOtpEmailError(payload?.emailError || null)
+            // Stop on OTP screen — profile steps only after verify creates the account
             setGate('otp')
             setOtpDigits(payload?.otp && payload.otp.length === 6 ? payload.otp.split('') : ['', '', '', '', '', ''])
         } catch (err) {
@@ -336,44 +538,59 @@ export default function RegisterPage() {
     const handleVerifyOtp = async () => {
         if (otpDigits.join('').length < 6) return
         try {
+            const email = isValidEmail(form.email) ? form.email.trim().toLowerCase() : undefined
+            const phone = normalizePhone(form.phone) || undefined
             const { data } = await verifyOtp.mutateAsync({
-                email: form.email.trim().toLowerCase(),
+                email,
+                phone,
                 otp: otpDigits.join(''),
             })
             if (data.data) {
+                // Account exists now — lock verified contact into the form for all steps
+                const lockedEmail = email || (typeof data.data.email === 'string' ? data.data.email : '') || ''
+                const lockedPhone = phone || (typeof data.data.phone === 'string' ? data.data.phone : '') || ''
+                setVerifiedEmail(lockedEmail && !lockedEmail.endsWith('@phone.tryst.app') ? lockedEmail : '')
+                setVerifiedPhone(lockedPhone)
                 setAuthenticated(true)
                 localStorage.setItem('tryst_token', 'supabase')
-                toast.success('Email verified', 'Now build your profile')
+                toast.success('Account created', 'Your contact is saved — finish your profile next')
                 setGate('profile')
                 setStep(1)
-                // Resume photos if they left mid-signup
                 try {
-                    const uid = (await createClient().auth.getUser()).data.user?.id
+                    const user = (await createClient().auth.getUser()).data.user
+                    const uid = user?.id
                     if (uid) {
+                        userIdRef.current = uid
                         const { data: row } = await createClient()
                             .from('users')
-                            .select('photo_urls, alias, age, gender, bio, seeking, desire_tags, city, country, latitude, longitude, profession, relationship_status')
+                            .select('photo_urls, alias, age, gender, bio, seeking, desire_tags, city, country, latitude, longitude, profession, relationship_status, phone, email')
                             .eq('id', uid)
                             .maybeSingle()
                         if (row?.photo_urls) setPhotoUrls((row.photo_urls as string[]) || [])
-                        if (row) {
-                            setForm((p) => ({
-                                ...p,
-                                alias: (row.alias as string) || p.alias,
-                                age: row.age ? String(row.age) : p.age,
-                                gender: (row.gender as typeof p.gender) || p.gender,
-                                bio: (row.bio as string) || p.bio,
-                                profession: (row.profession as string) || p.profession,
-                                city: (row.city as string) || p.city,
-                                country: (row.country as string) || p.country,
-                                latitude: (row.latitude as number) ?? p.latitude,
-                                longitude: (row.longitude as number) ?? p.longitude,
-                                interests: Array.isArray(row.desire_tags) && row.desire_tags.length
-                                    ? (row.desire_tags as string[])
-                                    : p.interests,
-                                seeking: normalizeSeeking(row.seeking as string) || p.seeking,
-                                intent: normalizeIntent(row.relationship_status as string) || p.intent,
-                            }))
+                        const base: RegisterDraftForm = {
+                            ...draftFormSnapshot(),
+                            email: lockedEmail || form.email,
+                            phone: lockedPhone || form.phone,
+                        }
+                        const nextForm = row
+                            ? formFromUserRow(row as Record<string, unknown>, base)
+                            : base
+                        // Always keep verified contact on the form
+                        nextForm.email = lockedEmail || nextForm.email
+                        nextForm.phone = lockedPhone || nextForm.phone
+                        setForm(nextForm)
+                        const photos = (row?.photo_urls as string[]) || []
+                        const resume = computeResumeStep(nextForm, photos.length)
+                        setStep(resume)
+                        saveRegisterDraft({
+                            userId: uid,
+                            step: resume,
+                            form: nextForm,
+                            updatedAt: Date.now(),
+                        })
+                        if (resume > 1) {
+                            setResumed(true)
+                            toast.info('Welcome back', `Continuing at step ${resume}`)
                         }
                     }
                 } catch { /* ignore resume errors */ }
@@ -408,16 +625,21 @@ export default function RegisterPage() {
             const res = await userApi.uploadPhotos(fd)
             const payload = res?.data?.data as { user?: { photoUrls?: string[] } } | undefined
             const urls = payload?.user?.photoUrls
+            let nextPhotos = photoUrls
             if (Array.isArray(urls) && urls.length) {
+                nextPhotos = urls
                 setPhotoUrls(urls)
             } else {
                 const uid = (await createClient().auth.getUser()).data.user?.id
                 if (uid) {
                     const { data: row } = await createClient().from('users').select('photo_urls').eq('id', uid).maybeSingle()
-                    setPhotoUrls((row?.photo_urls as string[]) || [])
+                    nextPhotos = (row?.photo_urls as string[]) || []
+                    setPhotoUrls(nextPhotos)
                 }
             }
             toast.success('Photos added')
+            writeLocalDraft(step)
+            void persistProgressToDb(draftFormSnapshot(), nextPhotos)
         } catch {
             toast.error('Upload failed', 'Try again after verifying email')
         } finally {
@@ -436,7 +658,11 @@ export default function RegisterPage() {
     }
 
     const canProceed = () => {
-        if (gate === 'email') return isValidEmail(form.email)
+        if (gate === 'contact') {
+            if (contactMode === 'email') return isValidEmail(form.email)
+            if (contactMode === 'phone') return isValidPhone(form.phone)
+            return isValidEmail(form.email) && isValidPhone(form.phone)
+        }
         if (gate === 'otp') return otpDigits.join('').length === 6
         if (step === 1) return form.alias.length >= 2 && Number(form.age) >= 18 && !!form.gender
         if (step === 2) return form.city.trim().length >= 2
@@ -449,7 +675,7 @@ export default function RegisterPage() {
     }
 
     const handleNext = async () => {
-        if (gate === 'email') {
+        if (gate === 'contact') {
             await handleSendOtp()
             return
         }
@@ -458,7 +684,11 @@ export default function RegisterPage() {
             return
         }
         if (step < 7) {
-            setStep((s) => s + 1)
+            const snapshot = draftFormSnapshot()
+            const nextStep = step + 1
+            writeLocalDraft(nextStep, snapshot)
+            void persistProgressToDb(snapshot, photoUrls)
+            setStep(nextStep)
             return
         }
         await handleSubmit()
@@ -466,10 +696,18 @@ export default function RegisterPage() {
 
     const handleBack = () => {
         if (gate === 'otp') {
-            setGate('email')
+            // Leave OTP — must re-send to start again; do not open profile steps
+            setGate('contact')
+            setOtpDigits(['', '', '', '', '', ''])
+            setShownOtp(null)
+            setSendError('')
             return
         }
-        if (gate === 'profile' && step > 1) setStep((s) => s - 1)
+        if (gate === 'profile' && step > 1) {
+            const next = step - 1
+            setStep(next)
+            writeLocalDraft(next)
+        }
     }
 
     const handleSubmit = async () => {
@@ -486,8 +724,14 @@ export default function RegisterPage() {
                 longitude = place.longitude
             }
 
+            const phone = normalizePhone(form.phone)
+            const email =
+                (isValidEmail(form.email) ? form.email.trim().toLowerCase() : null) ||
+                (phone ? phoneAuthEmail(phone) : '')
+
             await registerMutation.mutateAsync({
-                email: form.email.trim().toLowerCase(),
+                email,
+                phone: phone || undefined,
                 alias: form.alias.trim(),
                 age: Number(form.age),
                 gender: form.gender,
@@ -505,7 +749,9 @@ export default function RegisterPage() {
                     : { avatarUrl: photoUrls[0] }),
             })
 
+            clearRegisterDraft()
             sessionStorage.removeItem('tryst_email')
+            sessionStorage.removeItem('tryst_phone')
             sessionStorage.removeItem('tryst_google_data')
             router.push('/tonight')
         } catch {
@@ -514,6 +760,16 @@ export default function RegisterPage() {
     }
 
     const loading = registerMutation.isPending || verifyOtp.isPending || sendOtp.isPending || uploading
+
+    if (bootLoading) {
+        return (
+            <div className="min-h-screen bg-tryst-bg flex flex-col items-center justify-center gap-3">
+                <TrystLogo href="/" size="md" />
+                <Loader2 className="w-7 h-7 text-crimson animate-spin" />
+                <p className="text-ivory-500 text-sm">Checking your progress…</p>
+            </div>
+        )
+    }
 
     return (
         <div className="min-h-screen bg-tryst-bg relative overflow-hidden">
@@ -532,6 +788,37 @@ export default function RegisterPage() {
 
                 {gate === 'profile' && (
                     <div className="w-full max-w-lg mb-6">
+                        <VerifiedContactCard
+                            email={verifiedEmail || form.email}
+                            phone={verifiedPhone || form.phone}
+                            onUpdated={({ email: nextEmail, phone: nextPhone }) => {
+                                setVerifiedEmail(nextEmail)
+                                setVerifiedPhone(nextPhone)
+                                setForm((p) => ({
+                                    ...p,
+                                    email: nextEmail || p.email,
+                                    phone: nextPhone || p.phone,
+                                }))
+                                if (nextEmail) sessionStorage.setItem('tryst_email', nextEmail)
+                                else sessionStorage.removeItem('tryst_email')
+                                if (nextPhone) sessionStorage.setItem('tryst_phone', nextPhone)
+                                else sessionStorage.removeItem('tryst_phone')
+                                writeLocalDraft(step, {
+                                    ...draftFormSnapshot(),
+                                    email: nextEmail || form.email,
+                                    phone: nextPhone || form.phone,
+                                })
+                            }}
+                        />
+                        {resumed && (
+                            <div className="mb-4 rounded-xl border border-gold/25 bg-gold/10 px-4 py-3 text-sm text-ivory-200">
+                                <p className="font-medium text-gold-300">Picking up where you left off</p>
+                                <p className="text-xs text-ivory-500 mt-0.5">
+                                    Your answers are saved. Finish when you&apos;re ready.
+                                    {savingDraft ? ' · Saving…' : ''}
+                                </p>
+                            </div>
+                        )}
                         <div className="flex items-center justify-between mb-2">
                             <p className="text-ivory-400 text-xs font-medium tracking-wider uppercase">
                                 Profile {completion}% complete
@@ -565,29 +852,84 @@ export default function RegisterPage() {
                     className="w-full max-w-lg bg-tryst-card/95 backdrop-blur-xl border border-tryst-border/80 rounded-[1.5rem] p-6 sm:p-8 shadow-[0_24px_80px_rgba(0,0,0,0.18)]"
                 >
                     <AnimatePresence mode="wait">
-                        {gate === 'email' && (
-                            <motion.div key="email" {...fade} className="space-y-6">
+                        {gate === 'contact' && (
+                            <motion.div key="contact" {...fade} className="space-y-6">
                                 <div>
                                     <p className="text-gold-400 text-[10px] tracking-[0.28em] uppercase font-mono mb-2">Join TRYST</p>
-                                    <h2 className="font-playfair text-3xl font-bold text-ivory-100 mb-2">What&apos;s your email?</h2>
-                                    <p className="text-ivory-500 text-sm">We&apos;ll send a code — then you build your profile step by step.</p>
+                                    <h2 className="font-playfair text-3xl font-bold text-ivory-100 mb-2">
+                                        Email or phone first
+                                    </h2>
+                                    <p className="text-ivory-500 text-sm">
+                                        We&apos;ll send a code. After you verify, your account is created — then the profile steps begin with this contact already saved.
+                                    </p>
                                 </div>
+
+                                <div className="grid grid-cols-3 gap-2 p-1 rounded-xl bg-tryst-bg border border-tryst-border">
+                                    {([
+                                        { id: 'email' as const, label: 'Email' },
+                                        { id: 'phone' as const, label: 'Phone' },
+                                        { id: 'both' as const, label: 'Both' },
+                                    ]).map((m) => (
+                                        <button
+                                            key={m.id}
+                                            type="button"
+                                            onClick={() => {
+                                                setContactMode(m.id)
+                                                setSendError('')
+                                            }}
+                                            className={`py-2 rounded-lg text-xs font-semibold transition-colors ${
+                                                contactMode === m.id
+                                                    ? 'bg-crimson text-white'
+                                                    : 'text-ivory-500 hover:text-ivory-300'
+                                            }`}
+                                        >
+                                            {m.label}
+                                        </button>
+                                    ))}
+                                </div>
+
                                 {sendError && <OtpErrorBanner message={sendError} />}
-                                <EmailField
-                                    value={form.email}
-                                    onChange={(v) => {
-                                        updateForm('email', v)
-                                        setSendError('')
-                                    }}
-                                    id="reg-email"
-                                />
+
+                                {(contactMode === 'email' || contactMode === 'both') && (
+                                    <EmailField
+                                        value={form.email}
+                                        onChange={(v) => {
+                                            updateForm('email', v)
+                                            setSendError('')
+                                        }}
+                                        id="reg-email"
+                                    />
+                                )}
+
+                                {(contactMode === 'phone' || contactMode === 'both') && (
+                                    <div>
+                                        <label htmlFor="reg-phone" className="block text-xs text-ivory-500 uppercase tracking-wider mb-1.5">
+                                            Phone number
+                                        </label>
+                                        <div className="relative">
+                                            <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ivory-500" />
+                                            <input
+                                                id="reg-phone"
+                                                type="tel"
+                                                value={form.phone}
+                                                onChange={(e) => {
+                                                    updateForm('phone', e.target.value)
+                                                    setSendError('')
+                                                }}
+                                                placeholder="+91 98XXX XXXXX"
+                                                className="tryst-input w-full pl-10"
+                                            />
+                                        </div>
+                                    </div>
+                                )}
+
                                 <button
                                     type="button"
                                     disabled={!canProceed() || loading}
                                     onClick={() => void handleNext()}
                                     className="w-full tryst-button-primary py-3.5 rounded-xl flex items-center justify-center gap-2 disabled:opacity-40"
                                 >
-                                    {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <>Send code <ArrowRight className="w-4 h-4" /></>}
+                                    {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <>Send verification code <ArrowRight className="w-4 h-4" /></>}
                                 </button>
                                 <p className="text-center text-ivory-600 text-xs">
                                     Already have an account?{' '}
@@ -599,11 +941,21 @@ export default function RegisterPage() {
                         {gate === 'otp' && (
                             <motion.div key="otp" {...fade} className="space-y-6">
                                 <div>
+                                    <p className="text-gold-400 text-[10px] tracking-[0.28em] uppercase font-mono mb-2">Verify</p>
                                     <h2 className="font-playfair text-3xl font-bold text-ivory-100 mb-2">Enter your code</h2>
-                                    <p className="text-ivory-500 text-sm">Sent to <span className="text-ivory-300">{form.email}</span></p>
+                                    <p className="text-ivory-500 text-sm">
+                                        Code sent to{' '}
+                                        <span className="text-ivory-300">
+                                            {[
+                                                isValidEmail(form.email) ? form.email : null,
+                                                normalizePhone(form.phone),
+                                            ].filter(Boolean).join(' · ') || 'your contact'}
+                                        </span>
+                                        . Profile steps unlock after this.
+                                    </p>
                                 </div>
                                 <OtpDeliveryBanner
-                                    email={form.email}
+                                    email={isValidEmail(form.email) ? form.email : (normalizePhone(form.phone) || form.email)}
                                     mode={otpDelivery}
                                     otp={shownOtp}
                                     emailSent={otpEmailSent}
@@ -640,17 +992,17 @@ export default function RegisterPage() {
                                     onClick={() => void handleNext()}
                                     className="w-full tryst-button-primary py-3.5 rounded-xl flex items-center justify-center gap-2 disabled:opacity-40"
                                 >
-                                    {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <>Verify & continue <ChevronRight className="w-4 h-4" /></>}
+                                    {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <>Verify & create account <ChevronRight className="w-4 h-4" /></>}
                                 </button>
                                 <button type="button" onClick={handleBack} className="w-full text-ivory-500 text-sm hover:text-ivory-300">
-                                    ← Change email
+                                    ← Change email / phone
                                 </button>
                             </motion.div>
                         )}
 
                         {gate === 'profile' && step === 1 && (
                             <motion.div key="s1" {...fade} className="space-y-5">
-                                <Header title="The basics" sub="Name, age, and how you identify." />
+                                <Header title="The basics" sub="Name, age, and how you identify — your email/phone are already on your account." />
                                 <Field label="Display name">
                                     <IconInput
                                         icon={<User />}
@@ -660,7 +1012,7 @@ export default function RegisterPage() {
                                         autoComplete="nickname"
                                         onChange={(e) => updateForm('alias', e.target.value)}
                                     />
-                                    <Hint icon={<Lock className="w-3 h-3" />} text="Only this name is shown — not your email" />
+                                    <Hint icon={<Lock className="w-3 h-3" />} text="Only this name is shown — not your email or phone" />
                                 </Field>
                                 <Field label="Age">
                                     <input
@@ -913,6 +1265,12 @@ export default function RegisterPage() {
                             <motion.div key="s7" {...fade} className="space-y-5">
                                 <Header title="You're almost in" sub="Review and start discovering." />
                                 <div className="rounded-2xl border border-tryst-border bg-tryst-bg/50 p-4 space-y-3">
+                                    {(verifiedEmail || (form.email && !form.email.endsWith('@phone.tryst.app'))) && (
+                                        <Row k="Email" v={verifiedEmail || form.email} />
+                                    )}
+                                    {(verifiedPhone || form.phone) && (
+                                        <Row k="Phone" v={verifiedPhone || form.phone} />
+                                    )}
                                     <Row k="Name" v={form.alias} />
                                     <Row k="Age" v={form.age} />
                                     <Row
@@ -960,22 +1318,6 @@ export default function RegisterPage() {
             </div>
         </div>
     )
-}
-
-function normalizeSeeking(raw?: string | null): Seeking | '' {
-    const s = (raw || '').trim().toLowerCase()
-    if (s === 'women' || s === 'woman' || s === 'female') return 'women'
-    if (s === 'men' || s === 'man' || s === 'male') return 'men'
-    if (s === 'everyone' || s === 'all') return 'everyone'
-    return ''
-}
-
-function normalizeIntent(raw?: string | null): Intent | '' {
-    const s = (raw || '').trim().toLowerCase()
-    if (['long-term', 'short-term', 'casual', 'friendship', 'open-to-all'].includes(s)) {
-        return s as Intent
-    }
-    return ''
 }
 
 function Header({ title, sub }: { title: string; sub: string }) {

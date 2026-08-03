@@ -61,7 +61,7 @@
     --tryst-surface: #1C1412;
     --tryst-card: #1E1414;
     --tryst-card-2: #261919;
-    --tryst-elevated: #F5F1E9;
+    --tryst-elevated: #1E1414;
     --tryst-border: #2E1E1E;
     --tryst-border-2: #3D2828;
     --tryst-muted: #8A6060;
@@ -89,13 +89,13 @@
     --tryst-frame-border: rgba(46, 30, 30, 0.5);
     --tryst-hero-radial: radial-gradient(ellipse at center, #1A0808 0%, #0A0908 70%);
     --tryst-card-hover-shadow: 0 8px 32px rgba(192, 57, 43, 0.15);
-    --tryst-elevated-text: #1A1815;
-    --tryst-elevated-muted: #6B6560;
-    --tryst-elevated-subtle: #888880;
-    --tryst-elevated-border: #E8E0D4;
-    --tryst-elevated-hover: rgba(26, 24, 21, 0.04);
-    --tryst-toggle-off: #DDD5C5;
-    --tryst-toggle-on: rgba(192, 57, 43, 0.72);
+    --tryst-elevated-text: #F8F4ED;
+    --tryst-elevated-muted: #B8A08A;
+    --tryst-elevated-subtle: #8A6060;
+    --tryst-elevated-border: #2E1E1E;
+    --tryst-elevated-hover: rgba(248, 244, 237, 0.05);
+    --tryst-toggle-off: #3D2828;
+    --tryst-toggle-on: rgba(192, 57, 43, 0.85);
 }
 
 [data-theme="light"] {
@@ -4073,6 +4073,27 @@ select.tryst-input {
 }
 
 
+/* Hide-from page — follows light/dark tokens (not cream elevated cards) */
+.hide-page {
+    color: var(--tryst-text);
+    transition: color 0.35s ease;
+}
+
+.hide-card {
+    background: var(--tryst-card);
+    border: 1px solid var(--tryst-border);
+    border-radius: 1rem;
+    box-shadow: var(--tryst-shadow);
+    color: var(--tryst-text);
+    transition: background-color 0.35s ease, border-color 0.35s ease, color 0.35s ease, box-shadow 0.35s ease;
+}
+
+.hide-sheet {
+    background: var(--tryst-card);
+    color: var(--tryst-text);
+    border-color: var(--tryst-border);
+}
+
 /* YOU profile page — theme-aware editorial cards */
 .you-page {
     background: transparent;
@@ -4092,12 +4113,12 @@ select.tryst-input {
 }
 
 .you-card {
-    background: var(--tryst-elevated);
-    border: 1px solid var(--tryst-elevated-border);
+    background: var(--tryst-card);
+    border: 1px solid var(--tryst-border);
     border-radius: 1rem;
-    box-shadow: 0 1px 3px rgba(26, 24, 21, 0.06);
-    color: var(--tryst-elevated-text);
-    transition: background-color 0.35s ease, border-color 0.35s ease, color 0.35s ease;
+    box-shadow: var(--tryst-shadow);
+    color: var(--tryst-text);
+    transition: background-color 0.35s ease, border-color 0.35s ease, color 0.35s ease, box-shadow 0.35s ease;
 }
 
 .you-section-label {
@@ -4111,15 +4132,15 @@ select.tryst-input {
 }
 
 .you-ink {
-    color: var(--tryst-elevated-text);
+    color: var(--tryst-text);
 }
 
 .you-muted {
-    color: var(--tryst-elevated-muted);
+    color: var(--tryst-muted);
 }
 
 .you-subtle {
-    color: var(--tryst-elevated-subtle);
+    color: var(--tryst-muted-2);
 }
 
 .you-icon {
@@ -4131,11 +4152,11 @@ select.tryst-input {
 }
 
 .you-row:hover {
-    background: var(--tryst-elevated-hover);
+    background: color-mix(in srgb, var(--tryst-text) 4%, transparent);
 }
 
 .you-divider {
-    border-color: var(--tryst-elevated-border);
+    border-color: var(--tryst-border);
 }
 
 .you-chip {

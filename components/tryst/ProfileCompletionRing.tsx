@@ -25,7 +25,7 @@ export default function ProfileCompletionRing() {
     const offset = circumference - (percent / 100) * circumference
 
     return (
-        <div className="tryst-card p-5 mb-5 border-tryst-border">
+        <div className="you-card p-5 mb-5">
             <div className="flex items-center gap-5">
                 <div className="relative w-20 h-20 flex-shrink-0">
                     <svg className="w-20 h-20 -rotate-90" viewBox="0 0 80 80">
@@ -56,7 +56,7 @@ export default function ProfileCompletionRing() {
                         </p>
                     )}
                     {percent < 80 && (
-                        <Link href="/onboarding" className="text-crimson-300 text-xs mt-2 inline-block hover:underline">
+                        <Link href="/onboarding" className="text-crimson text-xs mt-2 inline-block hover:underline">
                             Complete your profile →
                         </Link>
                     )}

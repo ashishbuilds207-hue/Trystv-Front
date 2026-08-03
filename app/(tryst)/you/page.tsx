@@ -126,14 +126,36 @@ export default function YouPage() {
                 </Link>
             </div>
 
-            <Link href="/onboarding" className="you-card you-row p-4 mb-4 flex items-center gap-3 hover:border-crimson/20 transition-colors">
-                <User className="w-5 h-5 you-icon" />
-                <div className="flex-1">
-                    <p className="you-ink text-sm font-medium">Edit profile</p>
-                    <p className="you-muted text-xs">Alias, bio, basics, photos & who you&apos;re looking for</p>
+            <div className="you-card p-4 mb-5 space-y-3">
+                <div>
+                    <p className="you-section-label mb-1.5 px-0">Bio</p>
+                    {me?.bio ? (
+                        <p className="you-ink text-sm leading-relaxed whitespace-pre-wrap">{me.bio}</p>
+                    ) : (
+                        <p className="you-muted text-sm italic">No bio yet — add one in Edit profile.</p>
+                    )}
                 </div>
-                <ChevronRight className="w-4 h-4 you-subtle" />
-            </Link>
+                <div>
+                    <p className="you-section-label mb-2 px-0">Interests</p>
+                    {me?.desireTags && me.desireTags.length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5">
+                            {me.desireTags.map((tag: string) => (
+                                <span
+                                    key={tag}
+                                    className="px-2.5 py-1 rounded-full text-[11px] border border-crimson/30 bg-crimson/10 text-crimson"
+                                >
+                                    {tag}
+                                </span>
+                            ))}
+                        </div>
+                    ) : (
+                        <p className="you-muted text-sm italic">No interests selected yet.</p>
+                    )}
+                </div>
+                <Link href="/onboarding" className="inline-flex items-center gap-1 text-sm text-crimson hover:underline">
+                    Edit Profile <Edit3 className="w-4 h-4" />
+                </Link>
+            </div>
 
             <ProfileCompletionRing />
 
@@ -167,6 +189,16 @@ export default function YouPage() {
                     {me?.seeking || 'Everyone'} · {me?.agePrefMin || 18}–{me?.agePrefMax || 50} · {(me?.maxDistanceKm || 50) >= 100 ? 'Worldwide' : `${me?.maxDistanceKm || 50} km`}
                 </span>
                 <Edit3 className="w-4 h-4 you-subtle" />
+            </Link>
+
+            <p className="you-section-label">Hide from</p>
+            <Link href="/hide" className="you-card you-row p-4 mb-5 flex items-center gap-3 hover:border-crimson/25 transition-colors">
+                <EyeOff className="w-5 h-5 you-icon" />
+                <div className="flex-1">
+                    <p className="you-ink text-sm font-medium">Hide my profile from</p>
+                    <p className="you-muted text-xs">Block people by email or phone — they won&apos;t see you</p>
+                </div>
+                <ChevronRight className="w-4 h-4 you-subtle" />
             </Link>
 
             <p className="you-section-label">Privacy</p>
@@ -211,7 +243,9 @@ export default function YouPage() {
                     <div className="flex-1 text-left">
                         <p className="you-ink text-sm font-medium">{isNightMode ? 'Dark mode' : 'Light mode'}</p>
                         <p className="you-muted text-xs">
-                            {isNightMode ? 'Deep brown TRYST · cream accent cards' : 'Warm cream paper · brown accents'}
+                            {isNightMode
+                                ? 'Deep brown canvas · dark charcoal cards'
+                                : 'Warm cream paper · white cards · brown accents'}
                         </p>
                     </div>
                     <ToggleSwitch on={isNightMode} />
@@ -254,7 +288,7 @@ export default function YouPage() {
             </div>
 
             <button onClick={signOut}
-                className="w-full flex items-center gap-3 px-4 py-3.5 tryst-card text-tryst-muted hover:text-tryst-text transition-colors">
+                className="w-full flex items-center gap-3 px-4 py-3.5 you-card text-tryst-muted hover:text-tryst-text transition-colors">
                 <LogOut className="w-4 h-4" />
                 <span className="text-sm">Sign out discreetly</span>
             </button>

@@ -51,24 +51,40 @@ export function useAuthUser() {
 export function useSendOtp() {
     const toast = useToast()
     return useMutation({
-        mutationFn: (input: string | { email: string; purpose?: 'login' | 'register' }) => {
+        mutationFn: (
+            input:
+                | string
+                | { email?: string; phone?: string; purpose?: 'login' | 'register' },
+        ) => {
             if (typeof input === 'string') return authApi.sendOtp(input, 'login')
-            return authApi.sendOtp(input.email, input.purpose || 'login')
+            return authApi.sendOtp({
+                email: input.email,
+                phone: input.phone,
+                purpose: input.purpose || 'login',
+            })
         },
         onSuccess: (res) => {
-            const payload = res.data?.data as { emailSent?: boolean; otp?: string } | undefined
-            if (payload?.otp && !payload.emailSent) {
-                toast.success('Code ready', 'Use the code shown on screen (email blocked until domain verified).')
+            const payload = res.data?.data as {
+                emailSent?: boolean
+                smsSent?: boolean
+                otp?: string
+            } | undefined
+            if (payload?.otp && !payload.emailSent && !payload.smsSent) {
+                toast.success('Code ready', 'Use the code shown on screen.')
+            } else if (payload?.emailSent && payload?.smsSent) {
+                toast.success('Code sent', 'Check your email and phone.')
+            } else if (payload?.smsSent) {
+                toast.success('Code sent', 'Check your phone for the SMS.')
             } else if (payload?.emailSent) {
-                toast.success('Code sent', 'Check your inbox — code is also shown on screen for now.')
+                toast.success('Code sent', 'Check your inbox for the 6-digit code.')
             } else {
-                toast.success('Code sent', 'Check your email for the 6-digit TRYST code.')
+                toast.success('Code sent', 'Check email or phone for your TRYST code.')
             }
         },
         onError: (e: unknown) => {
             const msg = getApiErrorMessage(e, 'Try again shortly.')
-            // Register page shows its own banner for EMAIL_EXISTS
-            if (/already exists|try a new email/i.test(msg)) return
+            // Register page shows its own banner for CONTACT_EXISTS
+            if (/already exists|try a new email|try login/i.test(msg)) return
             toast.error('Could not send code', formatOtpSendError(msg))
         },
     })
@@ -90,7 +106,8 @@ export function useVerifyOtp() {
     const toast = useToast()
     const { setAuthenticated } = useAppStore()
     return useMutation({
-        mutationFn: ({ email, otp }: { email: string; otp: string }) => authApi.verifyOtp(email, otp),
+        mutationFn: (input: { email?: string; phone?: string; otp: string }) =>
+            authApi.verifyOtp(input),
         onSuccess: (res) => {
             if (!res.data.data.isNew) {
                 setAuthenticated(true)

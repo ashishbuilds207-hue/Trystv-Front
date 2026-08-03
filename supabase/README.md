@@ -7,7 +7,30 @@ Project URL: `https://oilpchbgufjtbxhpzula.supabase.co`
 1. Open [Supabase SQL Editor](https://supabase.com/dashboard/project/oilpchbgufjtbxhpzula/sql)
 2. Paste and run [`setup.sql`](./setup.sql) (full schema, RLS, RPCs, Storage policies, Realtime, dummy data)
 
-## Auth (magic link)
+## Auth (email + phone OTP)
+
+1. Run [`auth_phone_and_hide.sql`](./auth_phone_and_hide.sql) in the SQL Editor (phone column, OTP by email/phone, **Hide from** list).
+2. Auth → Providers → Email → **Confirm email = OFF**
+3. Put `SUPABASE_SERVICE_ROLE_KEY` in `.env.local` (required for OTP session creation).
+
+**Login / register:** user can enter **email only**, **phone only**, or **both**. Same 6-digit OTP is stored for each channel entered. Email via Resend/SendGrid; SMS via Twilio when configured:
+
+```env
+TWILIO_ACCOUNT_SID=...
+TWILIO_AUTH_TOKEN=...
+TWILIO_FROM_NUMBER=+1...   # or TWILIO_MESSAGING_SERVICE_SID=MG...
+OTP_DEV_SHOW_CODE=true     # show code on screen while SMS/email is being set up
+```
+
+### Hide my profile from (contacts)
+
+On **You → Hide from**, the owner adds unlimited emails/phones to `profile_hide_entries`.
+
+- If a viewer later signs up or logs in with a matching email **or** phone, they **cannot** see the owner’s profile (orbits, discover, likes, profile page).
+- Everyone else still sees the owner normally.
+- Matching uses RPCs `profile_hidden_from_viewer` and `owners_hidden_from_me`.
+
+## Auth (magic link) — optional alternate
 
 Dashboard → **Authentication** → **URL Configuration**:
 
@@ -35,12 +58,10 @@ SENDGRID_FROM_EMAIL=TRYST <you@yourverifieddomain.com>
 4. Restart `npm run dev`  
 If `SENDGRID_API_KEY` is set, OTP uses SendGrid (Resend is fallback only).
 
-### OTP table (store + match → token → next screen)
+### OTP table (legacy email-only)
 
-1. **Re-run** [`otp_table.sql`](./otp_table.sql) in Supabase SQL Editor (adds `consume_email_otp`)  
-2. Auth → Providers → Email → **Confirm email = OFF**  
-3. **Required for returning users:** Dashboard → Settings → API → copy **service_role** into `.env.local` as `SUPABASE_SERVICE_ROLE_KEY=` then restart `npm run dev`  
-4. Flow: send → `store_email_otp` + Resend code → verify → `match_email_otp` → Supabase session tokens → client `setSession` → `/tonight` or `/register`  
+Prefer [`auth_phone_and_hide.sql`](./auth_phone_and_hide.sql). Older [`otp_table.sql`](./otp_table.sql) only covered email.  
+Flow: send → `store_otp` + email/SMS → verify → `match_otp` → Supabase session → `/tonight` or `/register`.
 
 If verify still fails for an old test account without service_role: Authentication → Users → delete that email → request a new code.
 

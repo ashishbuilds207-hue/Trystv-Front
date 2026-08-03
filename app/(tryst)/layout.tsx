@@ -2,7 +2,7 @@
 
 import { usePathname, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { Flame, Ghost, Home, Orbit, MessageCircle, User, Heart, Radio } from 'lucide-react'
+import { Flame, Ghost, Home, Orbit, MessageCircle, User, Heart, Radio, EyeOff } from 'lucide-react'
 import { useAppStore } from '@/lib/store/useAppStore'
 import { useMatches, useLikes } from '@/lib/hooks/useDiscover'
 import MatchModal from '@/components/tryst/MatchModal'
@@ -17,7 +17,9 @@ import { SelfOnlineBadge } from '@/components/tryst/OnlineStatus'
 import NotificationsBell from '@/components/tryst/NotificationsBell'
 import OneSignalProvider from '@/components/tryst/OneSignalProvider'
 import IncomingCallListener from '@/components/tryst/IncomingCallListener'
-import { Suspense, useEffect } from 'react'
+import { Suspense, useEffect, useRef } from 'react'
+import GhostModeIntroModal from '@/components/tryst/GhostModeIntroModal'
+import { useGhostMode } from '@/lib/hooks/useGhostMode'
 
 const mobileNavItems = [
     { href: '/tonight', label: 'Tonight', icon: Home },
@@ -38,8 +40,9 @@ const PAGE_TITLES: Record<string, string> = {
     '/likes': 'Likes',
     '/chat': 'Messages',
     '/you': 'You',
+    '/hide': 'Hide from',
     '/gold': 'TRYST Gold',
-    '/onboarding': 'Desire DNA',
+    '/onboarding': 'Edit profile',
 }
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
@@ -53,10 +56,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 function AppLayoutInner({ children }: { children: React.ReactNode }) {
     const pathname = usePathname()
     const searchParams = useSearchParams()
-    const { isGhostMode, isNightMode, setDisguise } = useAppStore()
+    const { isGhostMode, isNightMode, setDisguise, setGhostMode } = useAppStore()
+    const { ghostIntroOpen, confirmEnableFromIntro, closeGhostIntro } = useGhostMode()
     const { data: matches = [] } = useMatches()
     const { data: likes = [] } = useLikes()
     const { data: me } = useAuthUser()
+    const ghostSyncedFor = useRef<string | null>(null)
     useSocket()
     useAutoLocation()
 
@@ -66,6 +71,17 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
             setDisguise(true, me.activeDisguiseSkin || 'newspaper')
         }
     }, [me?.disguiseModeEnabled, me?.activeDisguiseSkin, me, setDisguise])
+
+    // New / returning sessions: Ghost starts from profile (default OFF), not a stale local toggle.
+    useEffect(() => {
+        if (!me?.id) {
+            ghostSyncedFor.current = null
+            return
+        }
+        if (ghostSyncedFor.current === me.id) return
+        ghostSyncedFor.current = me.id
+        setGhostMode(!!me.isGhostMode)
+    }, [me?.id, me?.isGhostMode, setGhostMode])
 
     const unreadCount = matches.reduce((acc: number, m: { unreadCount: number }) => acc + m.unreadCount, 0)
     const pageTitle = PAGE_TITLES[pathname] || (pathname.startsWith('/echoes') ? 'Echoes' : 'TRYST')
@@ -80,6 +96,11 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
             <MatchModal />
             <DisguiseOverlay />
             <TonightDisguiseBoot />
+            <GhostModeIntroModal
+                open={ghostIntroOpen}
+                onClose={closeGhostIntro}
+                onEnable={confirmEnableFromIntro}
+            />
 
             <div className="app-frame-outer">
                 <div className="app-frame-inner">
@@ -109,6 +130,17 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
                                 )}
                                 <ThemeToggle compact />
                                 <SelfOnlineBadge className="hidden sm:inline-flex" />
+                                <Link
+                                    href="/hide"
+                                    title="Hide from"
+                                    className={`w-9 h-9 rounded-full border flex items-center justify-center transition-colors ${
+                                        pathname === '/hide'
+                                            ? 'border-crimson/40 bg-crimson/15 text-crimson-300'
+                                            : 'border-tryst-border text-ivory-500 hover:text-ivory-200 hover:border-crimson/30'
+                                    }`}
+                                >
+                                    <EyeOff className="w-4 h-4" />
+                                </Link>
                                 <NotificationsBell />
                             </div>
                         </header>

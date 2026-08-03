@@ -1,16 +1,35 @@
 import { NextResponse } from 'next/server'
 import { hashOtp } from '@/lib/email/otpChallenge'
-import { anonClient, sessionAfterOtpMatch } from '@/lib/email/otpAuth'
+import { anonClient, sessionAfterOtpMatch, ensureAuthUserForOtp } from '@/lib/email/otpAuth'
+import { consumeOtpMemory, matchOtpMemory } from '@/lib/email/otpMemory'
+import {
+    normalizeEmail,
+    normalizePhone,
+    phoneAuthEmail,
+} from '@/lib/auth/contact'
+
+function mapMatchError(match: unknown): string {
+    const err = (match as { error?: string })?.error
+    if (err === 'EXPIRED') return 'Code expired — request a new one'
+    if (err === 'TOO_MANY_ATTEMPTS') return 'Too many attempts — request a new code'
+    if (err === 'MISMATCH') return 'Incorrect code'
+    return 'Invalid or expired code'
+}
 
 export async function POST(req: Request) {
     try {
-        const { email, otp } = (await req.json()) as { email?: string; otp?: string }
-        const normalized = (email || '').trim().toLowerCase()
-        const code = String(otp || '').trim()
+        const body = (await req.json()) as {
+            email?: string
+            phone?: string
+            otp?: string
+        }
+        const email = normalizeEmail(body.email)
+        const phone = normalizePhone(body.phone)
+        const code = String(body.otp || '').trim()
 
-        if (!normalized || code.length < 6) {
+        if ((!email && !phone) || code.length < 6) {
             return NextResponse.json(
-                { success: false, message: 'Email and 6-digit code required' },
+                { success: false, message: 'Email or phone and 6-digit code required' },
                 { status: 400 },
             )
         }
@@ -18,35 +37,75 @@ export async function POST(req: Request) {
         const codeHash = hashOtp(code)
         const supabase = anonClient()
 
-        // 1) Match against otp_codes table (Resend code) — do NOT use Supabase verifyOtp
-        const { data: match, error: matchErr } = await supabase.rpc('match_email_otp', {
-            p_email: normalized,
-            p_code_hash: codeHash,
-        })
+        const tryIds = [
+            email ? { id: email, channel: 'email' as const } : null,
+            phone ? { id: phone.toLowerCase(), channel: 'phone' as const } : null,
+        ].filter(Boolean) as { id: string; channel: 'email' | 'phone' }[]
 
-        if (matchErr) {
-            return NextResponse.json(
-                {
-                    success: false,
-                    message:
-                        matchErr.message.includes('function') || matchErr.code === 'PGRST202'
-                            ? 'OTP table missing. Run TRYSTV1/supabase/otp_table.sql in Supabase SQL Editor.'
-                            : matchErr.message,
-                },
-                { status: 500 },
-            )
+        let matchedId: string | null = null
+        let lastMatch: unknown = null
+        let matchedViaMemory = false
+
+        for (const item of tryIds) {
+            let match: unknown = null
+            let matchErr: { message?: string; code?: string } | null = null
+
+            const rpc = await supabase.rpc('match_otp', {
+                p_identifier: item.id,
+                p_code_hash: codeHash,
+            })
+            match = rpc.data
+            matchErr = rpc.error
+
+            if (matchErr && item.channel === 'email') {
+                const legacy = await supabase.rpc('match_email_otp', {
+                    p_email: item.id,
+                    p_code_hash: codeHash,
+                })
+                match = legacy.data
+                matchErr = legacy.error
+            }
+
+            if (matchErr) {
+                // Fall back to on-screen / memory OTP when SQL RPCs are missing
+                const mem = matchOtpMemory(item.id, codeHash)
+                lastMatch = mem.ok ? { ok: true } : { error: mem.error }
+                if (mem.ok) {
+                    matchedId = item.id
+                    matchedViaMemory = true
+                    break
+                }
+                continue
+            }
+
+            lastMatch = match
+            if (match && (match as { ok?: boolean }).ok === true) {
+                matchedId = item.id
+                break
+            }
+
+            // RPC returned mismatch — also try memory (code was shown on screen)
+            const mem = matchOtpMemory(item.id, codeHash)
+            if (mem.ok) {
+                matchedId = item.id
+                matchedViaMemory = true
+                lastMatch = { ok: true }
+                break
+            }
         }
 
-        const matched = match && (match as { ok?: boolean }).ok === true
-        if (!matched) {
+        if (!matchedId) {
             return NextResponse.json(
-                { success: false, message: mapMatchError(match) },
+                { success: false, message: mapMatchError(lastMatch) },
                 { status: 400 },
             )
         }
 
-        // 2) Code OK → create Supabase session (stable password / service role)
-        const session = await sessionAfterOtpMatch(normalized)
+        const authEmail = email || phoneAuthEmail(phone!)
+        // Ensure auth user exists (needed when send used memory fallback)
+        await ensureAuthUserForOtp(authEmail)
+
+        const session = await sessionAfterOtpMatch(authEmail)
         if ('error' in session && session.error) {
             return NextResponse.json({ success: false, message: session.error }, { status: 400 })
         }
@@ -55,11 +114,25 @@ export async function POST(req: Request) {
         const refreshToken = (session as { refreshToken: string }).refreshToken
         const userId = (session as { userId: string }).userId
 
-        // 3) Consume OTP only after tokens are ready
-        await supabase.rpc('consume_email_otp', { p_email: normalized })
+        for (const item of tryIds) {
+            consumeOtpMemory(item.id)
+            if (!matchedViaMemory) {
+                try {
+                    await supabase.rpc('consume_otp', { p_identifier: item.id })
+                } catch { /* ignore */ }
+                if (item.channel === 'email') {
+                    try {
+                        await supabase.rpc('consume_email_otp', { p_email: item.id })
+                    } catch { /* ignore */ }
+                }
+            }
+        }
 
-        // 4) Ensure profile row — never overwrite a saved display name (alias)
         const userClient = anonClient(accessToken)
+        const patch: Record<string, unknown> = {}
+        if (email) patch.email = email
+        if (phone) patch.phone = phone
+
         const { data: existing } = await userClient
             .from('users')
             .select('id, alias, profile_complete, age, gender')
@@ -69,33 +142,36 @@ export async function POST(req: Request) {
         if (!existing) {
             await userClient.from('users').insert({
                 id: userId,
-                email: normalized,
+                email: email || null,
+                phone: phone || null,
                 alias: '',
+                is_ghost_mode: false,
             })
-        } else {
-            await userClient.from('users').update({ email: normalized }).eq('id', userId)
+        } else if (Object.keys(patch).length) {
+            await userClient.from('users').update(patch).eq('id', userId)
         }
 
         const { data: profile } = await userClient
             .from('users')
-            .select('age, gender, profile_complete, alias')
+            .select('id, alias, profile_complete, age, gender')
             .eq('id', userId)
             .maybeSingle()
 
-        const savedName = (profile?.alias || '').trim()
-        const isNew = !profile?.profile_complete || !profile?.age || !profile?.gender || !savedName
+        const isNew =
+            !profile?.profile_complete ||
+            !profile.alias ||
+            profile.alias === 'NewUser' ||
+            profile.alias === ''
 
-        // 5) Tokens for client setSession → next screen
         return NextResponse.json({
             success: true,
             data: {
-                isNew,
-                email: normalized,
-                userId,
                 accessToken,
                 refreshToken,
-                alias: savedName || null,
-                displayName: savedName || null,
+                userId,
+                isNew,
+                email,
+                phone,
             },
         })
     } catch (e: unknown) {
@@ -104,21 +180,5 @@ export async function POST(req: Request) {
             { success: false, message: e instanceof Error ? e.message : 'Verify failed' },
             { status: 500 },
         )
-    }
-}
-
-function mapMatchError(match: unknown): string {
-    const err = (match as { error?: string } | null)?.error
-    switch (err) {
-        case 'expired':
-            return 'Code expired. Request a new one.'
-        case 'too_many_attempts':
-            return 'Too many attempts. Request a new code.'
-        case 'no_code':
-            return 'No code found. Request a new code.'
-        case 'mismatch':
-            return 'Invalid code. Check your email and try again.'
-        default:
-            return 'Invalid or expired code.'
     }
 }

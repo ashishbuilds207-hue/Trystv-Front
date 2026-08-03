@@ -3,78 +3,120 @@ import { buildOtpEmailHtml, buildOtpEmailText } from '@/lib/email/otpTemplate'
 import { generateOtp, hashOtp } from '@/lib/email/otpChallenge'
 import { adminClient, anonClient, ensureAuthUserForOtp } from '@/lib/email/otpAuth'
 import { getMailProvider, sendOtpMail } from '@/lib/email/sendMail'
+import { sendOtpSms } from '@/lib/email/sendSms'
+import { storeOtpMemory } from '@/lib/email/otpMemory'
+import {
+    normalizeEmail,
+    normalizePhone,
+    phoneAuthEmail,
+} from '@/lib/auth/contact'
 
 const rateMap = new Map<string, number>()
 
-/** For now: always return OTP in API so UI can show it while email domain is unverified. */
-function showOtpInResponse() {
-    return process.env.OTP_DEV_SHOW_CODE !== 'false'
-}
-
-async function emailAlreadyRegistered(email: string): Promise<boolean> {
+async function contactAlreadyRegistered(email: string | null, phone: string | null): Promise<boolean> {
     const admin = adminClient()
+    const client = admin || anonClient()
 
-    if (admin) {
-        const { data: profile } = await admin
+    if (email) {
+        const { data: byEmail } = await client
             .from('users')
             .select('id, profile_complete, alias')
             .eq('email', email)
             .maybeSingle()
+        if (byEmail?.profile_complete) return true
+        if (byEmail?.alias && byEmail.alias !== 'NewUser' && byEmail.alias !== '') return true
+    }
+    if (phone) {
+        const { data: byPhone } = await client
+            .from('users')
+            .select('id, profile_complete, alias')
+            .eq('phone', phone)
+            .maybeSingle()
+        if (byPhone?.profile_complete) return true
+        if (byPhone?.alias && byPhone.alias !== 'NewUser' && byPhone.alias !== '') return true
+    }
+    return false
+}
 
-        if (profile?.profile_complete) return true
-        if (profile?.alias && profile.alias !== 'NewUser') return true
+async function persistOtp(
+    supabase: ReturnType<typeof anonClient>,
+    identifiers: { id: string; channel: 'email' | 'phone' }[],
+    code: string,
+    codeHash: string,
+): Promise<{ dbOk: boolean; usedMemory: boolean }> {
+    let dbOk = true
+    for (const item of identifiers) {
+        const { error: storeErr } = await supabase.rpc('store_otp', {
+            p_identifier: item.id,
+            p_code_hash: codeHash,
+            p_channel: item.channel,
+            p_ttl_minutes: 10,
+        })
+        if (!storeErr) continue
 
-        const { data: listed } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 })
-        const authUser = listed?.users?.find((u) => u.email?.toLowerCase() === email)
-        if (authUser) {
-            const { data: byId } = await admin
-                .from('users')
-                .select('id, profile_complete, alias')
-                .eq('id', authUser.id)
-                .maybeSingle()
-            if (byId?.profile_complete) return true
-            if (byId?.alias && byId.alias !== 'NewUser') return true
+        if (item.channel === 'email') {
+            const { error: legacyErr } = await supabase.rpc('store_email_otp', {
+                p_email: item.id,
+                p_code_hash: codeHash,
+                p_ttl_minutes: 10,
+            })
+            if (!legacyErr) continue
         }
-        return false
+        dbOk = false
     }
 
-    const supabase = anonClient()
-    const { data: profile } = await supabase
-        .from('users')
-        .select('id, profile_complete, alias')
-        .eq('email', email)
-        .maybeSingle()
+    // Always keep a memory copy so on-screen OTP works even if SQL isn't run yet
+    for (const item of identifiers) {
+        storeOtpMemory(item.id, code)
+    }
 
-    if (profile?.profile_complete) return true
-    if (profile?.alias && profile.alias !== 'NewUser') return true
-    return false
+    return { dbOk, usedMemory: !dbOk }
 }
 
 export async function POST(req: Request) {
     try {
-        const body = (await req.json()) as { email?: string; purpose?: 'login' | 'register' }
-        const normalized = (body.email || '').trim().toLowerCase()
+        const body = (await req.json()) as {
+            email?: string
+            phone?: string
+            purpose?: 'login' | 'register'
+        }
+        const email = normalizeEmail(body.email)
+        const phone = normalizePhone(body.phone)
         const purpose = body.purpose === 'register' ? 'register' : 'login'
 
-        if (!normalized || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+        if (!email && !phone) {
+            return NextResponse.json(
+                { success: false, message: 'Enter email and/or phone number' },
+                { status: 400 },
+            )
+        }
+        if (body.email && !email) {
             return NextResponse.json({ success: false, message: 'Valid email required' }, { status: 400 })
+        }
+        if (body.phone && !phone) {
+            return NextResponse.json({ success: false, message: 'Valid phone required' }, { status: 400 })
         }
 
         if (purpose === 'register') {
-            const exists = await emailAlreadyRegistered(normalized)
-            if (exists) {
-                return NextResponse.json(
-                    {
-                        success: false,
-                        message: 'Email already exists — try a new email',
-                        code: 'EMAIL_EXISTS',
-                    },
-                    { status: 409 },
-                )
+            try {
+                const exists = await contactAlreadyRegistered(email, phone)
+                if (exists) {
+                    return NextResponse.json(
+                        {
+                            success: false,
+                            message: 'Account already exists — try login, or a new email / phone',
+                            code: 'CONTACT_EXISTS',
+                        },
+                        { status: 409 },
+                    )
+                }
+            } catch {
+                /* users table may be incomplete — allow continue */
             }
         }
 
-        const last = rateMap.get(normalized) || 0
+        const rateKey = email || phone!
+        const last = rateMap.get(rateKey) || 0
         if (Date.now() - last < 45_000) {
             return NextResponse.json(
                 { success: false, message: 'Please wait ~45s before requesting another code.' },
@@ -85,82 +127,76 @@ export async function POST(req: Request) {
         const code = generateOtp()
         const codeHash = hashOtp(code)
         const supabase = anonClient()
+        const authEmail = email || phoneAuthEmail(phone!)
 
-        // 1) Store hash in otp_codes
-        const { data: stored, error: storeErr } = await supabase.rpc('store_email_otp', {
-            p_email: normalized,
-            p_code_hash: codeHash,
-            p_ttl_minutes: 10,
-        })
-        if (storeErr) {
-            console.error('[send-otp] store_email_otp', storeErr)
-            return NextResponse.json(
-                {
-                    success: false,
-                    message:
-                        storeErr.message.includes('function') || storeErr.code === 'PGRST202'
-                            ? 'OTP table missing. Run TRYSTV1/supabase/otp_table.sql in Supabase SQL Editor.'
-                            : storeErr.message,
-                },
-                { status: 500 },
-            )
-        }
+        const identifiers: { id: string; channel: 'email' | 'phone' }[] = []
+        if (email) identifiers.push({ id: email, channel: 'email' })
+        if (phone) identifiers.push({ id: phone.toLowerCase(), channel: 'phone' })
 
-        // 2) Ensure Auth user (admin — no Supabase emails)
-        const ensured = await ensureAuthUserForOtp(normalized)
+        await persistOtp(supabase, identifiers, code, codeHash)
+
+        const ensured = await ensureAuthUserForOtp(authEmail)
         if (!ensured.ok) {
             const isRate = /rate limit|over_email/i.test(ensured.message || '')
-            return NextResponse.json(
-                {
-                    success: false,
-                    message: isRate ? 'email rate limit exceeded' : ensured.message,
-                    code: isRate ? 'EMAIL_RATE_LIMIT' : undefined,
-                },
-                { status: isRate ? 429 : 400 },
-            )
+            // Still return on-screen OTP if auth user prep failed for non-rate reasons? Rate = hard fail
+            if (isRate) {
+                return NextResponse.json(
+                    {
+                        success: false,
+                        message: 'email rate limit exceeded',
+                        code: 'EMAIL_RATE_LIMIT',
+                    },
+                    { status: 429 },
+                )
+            }
+            // For missing service role etc., still show code so local testing works when possible
+            console.warn('[send-otp] ensureAuthUser:', ensured.message)
         }
 
-        // 3) Try email — if it fails (Resend test limit etc.), still succeed and show OTP on screen
         let emailSent = false
-        let provider: string | null = getMailProvider()
+        let smsSent = false
         let emailError: string | null = null
+        let smsError: string | null = null
+        const provider = getMailProvider()
 
-        if (provider) {
+        if (email && provider) {
             const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').replace(/\/$/, '')
             const mailed = await sendOtpMail({
-                to: normalized,
+                to: email,
                 subject: `${code} is your TRYST code`,
-                html: buildOtpEmailHtml({ code, email: normalized, appUrl }),
+                html: buildOtpEmailHtml({ code, email, appUrl }),
                 text: buildOtpEmailText(code),
             })
-            if (mailed.ok) {
-                emailSent = true
-                provider = mailed.provider
-            } else {
-                emailError = mailed.message
-                console.warn('[send-otp] email failed, showing OTP on screen:', mailed.message)
-            }
+            if (mailed.ok) emailSent = true
+            else emailError = mailed.message
+        } else if (email && !provider) {
+            emailError = 'Email provider not configured'
         }
 
-        rateMap.set(normalized, Date.now())
+        if (phone) {
+            const sms = await sendOtpSms(phone, code)
+            if (sms.ok) smsSent = true
+            else smsError = sms.message || 'SMS not sent'
+        }
 
-        const reveal = showOtpInResponse() || !emailSent
+        rateMap.set(rateKey, Date.now())
+
+        const delivered = emailSent || smsSent
 
         return NextResponse.json({
             success: true,
-            message: emailSent
-                ? 'Verification code sent'
-                : 'Verification code ready (email not delivered — use the code shown)',
+            message: delivered
+                ? 'Verification code sent — also shown on screen'
+                : 'Use the code shown on screen to continue',
             data: {
-                otpMode: emailSent ? ('email' as const) : ('onscreen' as const),
-                email: normalized,
-                stored: stored ?? true,
-                mode: ensured.mode,
-                provider,
+                otpMode: 'onscreen' as const,
+                email,
+                phone,
                 emailSent,
+                smsSent,
                 emailError: emailSent ? null : emailError,
-                // Shown in UI until Resend domain is verified / email works
-                ...(reveal ? { otp: code } : {}),
+                smsError: smsSent ? null : smsError,
+                otp: code,
             },
         })
     } catch (e: unknown) {

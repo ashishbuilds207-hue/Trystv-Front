@@ -12,6 +12,7 @@ import {
 } from '@/lib/hooks/useFeatures'
 import { engagementApi } from '@/lib/api/auth'
 import { useAppStore } from '@/lib/store/useAppStore'
+import { useGhostMode } from '@/lib/hooks/useGhostMode'
 import { useQueryClient, useMutation } from '@tanstack/react-query'
 import { useToast } from '@/lib/hooks/useToast'
 import ProfileAvatar from './ProfileAvatar'
@@ -27,7 +28,8 @@ export default function TonightView() {
     const streakMut = useStreakCheckIn()
     const diaryMut = useSaveDiary()
     const momentMut = useCreateMoment()
-    const { isNightMode, toggleNightMode, isGhostMode, toggleGhostMode, disguiseModeEnabled, setDisguise, activeDisguiseSkin } = useAppStore()
+    const { isNightMode, toggleNightMode, disguiseModeEnabled, setDisguise, activeDisguiseSkin } = useAppStore()
+    const { isGhostMode, requestToggle: requestGhostToggle } = useGhostMode()
     const toast = useToast()
     const qc = useQueryClient()
 
@@ -106,7 +108,7 @@ export default function TonightView() {
                             }`}>
                             {night ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
                         </button>
-                        <button onClick={toggleGhostMode} title="Ghost mode"
+                        <button onClick={requestGhostToggle} title={isGhostMode ? 'Ghost Mode on — tap to turn off' : 'Ghost Mode'}
                             className={`w-9 h-9 rounded-full border flex items-center justify-center transition-all ${
                                 isGhostMode ? 'bg-gold/10 border-gold/40 text-gold-400' : 'bg-tryst-card border-tryst-border text-ivory-500'
                             }`}>

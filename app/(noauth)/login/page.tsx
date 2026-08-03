@@ -3,7 +3,7 @@
 import { useState, useEffect, Suspense } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { ArrowRight, Mail } from 'lucide-react'
+import { ArrowRight, Mail, Phone } from 'lucide-react'
 import { TrystLogo } from '@/components/tryst/TrystLogo'
 import { EmailField, isValidEmail } from '@/components/auth/EmailField'
 import { GoogleSignInButton, AuthDivider } from '@/components/auth/GoogleSignInButton'
@@ -15,6 +15,7 @@ import { formatOtpSendError, getApiErrorMessage } from '@/lib/api/errors'
 import { OtpErrorBanner } from '@/components/auth/OtpErrorBanner'
 import { OtpDeliveryBanner } from '@/components/auth/OtpSentBanner'
 import type { OtpDeliveryMode } from '@/components/auth/OtpSentBanner'
+import { isValidPhone, normalizePhone } from '@/lib/auth/contact'
 
 function LoginContent() {
     const router = useRouter()
@@ -25,8 +26,9 @@ function LoginContent() {
     const sendOtp = useSendOtp()
     const verifyOtp = useVerifyOtp()
 
-    const [step, setStep] = useState<'email' | 'otp'>('email')
+    const [step, setStep] = useState<'contact' | 'otp'>('contact')
     const [email, setEmail] = useState('')
+    const [phone, setPhone] = useState('')
     const [otp, setOtp] = useState(['', '', '', '', '', ''])
     const [sendError, setSendError] = useState('')
     const [otpDelivery, setOtpDelivery] = useState<OtpDeliveryMode>('email')
@@ -47,15 +49,25 @@ function LoginContent() {
     }, [cooldown])
 
     const normalizedEmail = email.trim().toLowerCase()
+    const normalizedPhone = normalizePhone(phone)
+    const canSend =
+        (isValidEmail(email) || isValidPhone(phone)) &&
+        (!email.trim() || isValidEmail(email)) &&
+        (!phone.trim() || isValidPhone(phone))
     const loading = sendOtp.isPending || verifyOtp.isPending
 
-    const handleEmailSubmit = async (e: React.FormEvent) => {
+    const handleContactSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
-        if (!isValidEmail(email) || cooldown > 0) return
+        if (!canSend || cooldown > 0) return
         setSendError('')
         try {
-            sessionStorage.setItem('tryst_email', normalizedEmail)
-            const res = await sendOtp.mutateAsync(normalizedEmail)
+            if (normalizedEmail) sessionStorage.setItem('tryst_email', normalizedEmail)
+            if (normalizedPhone) sessionStorage.setItem('tryst_phone', normalizedPhone)
+            const res = await sendOtp.mutateAsync({
+                email: isValidEmail(email) ? normalizedEmail : undefined,
+                phone: normalizedPhone || undefined,
+                purpose: 'login',
+            })
             const payload = res.data?.data as {
                 otpMode?: OtpDeliveryMode
                 otp?: string
@@ -94,9 +106,14 @@ function LoginContent() {
         e.preventDefault()
         if (otp.join('').length < 6) return
         try {
-            const { data } = await verifyOtp.mutateAsync({ email: normalizedEmail, otp: otp.join('') })
+            const { data } = await verifyOtp.mutateAsync({
+                email: isValidEmail(email) ? normalizedEmail : undefined,
+                phone: normalizedPhone || undefined,
+                otp: otp.join(''),
+            })
             if (data.data.isNew) {
-                sessionStorage.setItem('tryst_email', normalizedEmail)
+                if (normalizedEmail) sessionStorage.setItem('tryst_email', normalizedEmail)
+                if (normalizedPhone) sessionStorage.setItem('tryst_phone', normalizedPhone)
                 router.push('/register')
             } else {
                 localStorage.setItem('tryst_token', 'supabase')
@@ -104,7 +121,7 @@ function LoginContent() {
                 const name = (data.data.user?.alias || '').trim()
                 toast.success(
                     'Welcome back!',
-                    name ? `Good to see you, ${name}.` : `Signed in as ${normalizedEmail}`,
+                    name ? `Good to see you, ${name}.` : 'Signed in',
                 )
                 router.push('/tonight')
             }
@@ -112,6 +129,11 @@ function LoginContent() {
             /* toast from hook */
         }
     }
+
+    const contactLabel = [
+        isValidEmail(email) ? normalizedEmail : null,
+        normalizedPhone,
+    ].filter(Boolean).join(' · ')
 
     return (
         <div className="min-h-screen bg-tryst-bg flex">
@@ -144,12 +166,12 @@ function LoginContent() {
                 </div>
 
                 <div className="w-full max-w-sm relative z-10 rounded-2xl border border-tryst-border/70 bg-tryst-card/80 backdrop-blur-md p-6 sm:p-7 shadow-[0_20px_60px_rgba(0,0,0,0.12)] lg:border-0 lg:bg-transparent lg:backdrop-blur-none lg:p-0 lg:shadow-none">
-                    {step === 'email' ? (
+                    {step === 'contact' ? (
                         <>
                             <div className="mb-8">
                                 <h2 className="font-playfair text-3xl font-bold text-ivory-100 mb-2">Welcome back.</h2>
                                 <p className="text-ivory-500 text-sm">
-                                    Sign in with your email or Google. Your saved name is what others see — not your email.
+                                    Sign in with email, phone, or both. Enter either one — or both for extra safety.
                                 </p>
                             </div>
 
@@ -158,14 +180,30 @@ function LoginContent() {
                                 <AuthDivider />
                             </div>
 
-                            <form onSubmit={handleEmailSubmit} className="space-y-4">
+                            <form onSubmit={handleContactSubmit} className="space-y-4">
                                 <EmailField value={email} onChange={setEmail} id="login-email" />
+                                <div>
+                                    <label htmlFor="login-phone" className="block text-xs text-ivory-500 uppercase tracking-wider mb-1.5">
+                                        Phone <span className="normal-case tracking-normal text-ivory-600">(optional if email set)</span>
+                                    </label>
+                                    <div className="relative">
+                                        <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ivory-500" />
+                                        <input
+                                            id="login-phone"
+                                            type="tel"
+                                            value={phone}
+                                            onChange={(e) => setPhone(e.target.value)}
+                                            placeholder="+91 98XXX XXXXX"
+                                            className="tryst-input w-full pl-10"
+                                        />
+                                    </div>
+                                </div>
                                 {sendError && (
                                     <OtpErrorBanner message={sendError} onDismiss={() => setSendError('')} />
                                 )}
                                 <button
                                     type="submit"
-                                    disabled={loading || !isValidEmail(email) || cooldown > 0}
+                                    disabled={loading || !canSend || cooldown > 0}
                                     className="tryst-button-primary w-full flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                     {loading ? (
@@ -174,7 +212,7 @@ function LoginContent() {
                                         <>Wait {cooldown}s</>
                                     ) : (
                                         <>
-                                            Send code to email
+                                            Send verification code
                                             <ArrowRight className="w-4 h-4" />
                                         </>
                                     )}
@@ -185,16 +223,18 @@ function LoginContent() {
                         <>
                             <div className="mb-6">
                                 <div className="w-14 h-14 rounded-2xl bg-crimson/10 border border-crimson/25 flex items-center justify-center mb-5">
-                                    <Mail className="w-6 h-6 text-crimson" />
+                                    {normalizedPhone && !isValidEmail(email)
+                                        ? <Phone className="w-6 h-6 text-crimson" />
+                                        : <Mail className="w-6 h-6 text-crimson" />}
                                 </div>
                                 <h2 className="font-playfair text-3xl font-bold text-ivory-100 mb-2">
                                     Enter your code
                                 </h2>
                                 <p className="text-ivory-500 text-sm mb-4">
-                                    We sent a 6-digit code to your Gmail. It expires in 10 minutes.
+                                    6-digit code sent to {contactLabel || 'your contact'}. Expires in 10 minutes.
                                 </p>
                                 <OtpDeliveryBanner
-                                    email={normalizedEmail}
+                                    email={normalizedEmail || contactLabel}
                                     mode={otpDelivery}
                                     otp={shownOtp}
                                     emailSent={otpEmailSent}
@@ -243,13 +283,13 @@ function LoginContent() {
                                 <button
                                     type="button"
                                     onClick={() => {
-                                        setStep('email')
+                                        setStep('contact')
                                         setOtp(['', '', '', '', '', ''])
                                         setSendError('')
                                     }}
                                     className="w-full text-center text-ivory-500 text-sm hover:text-ivory-300 transition-colors"
                                 >
-                                    ← Change email
+                                    ← Change email / phone
                                 </button>
 
                                 <button
@@ -258,7 +298,11 @@ function LoginContent() {
                                     onClick={async () => {
                                         setSendError('')
                                         try {
-                                            const res = await sendOtp.mutateAsync(normalizedEmail)
+                                            const res = await sendOtp.mutateAsync({
+                                                email: isValidEmail(email) ? normalizedEmail : undefined,
+                                                phone: normalizedPhone || undefined,
+                                                purpose: 'login',
+                                            })
                                             const payload = res.data?.data as {
                                                 otpMode?: OtpDeliveryMode
                                                 otp?: string

@@ -1,9 +1,10 @@
 'use client'
 
 import Link from 'next/link'
-import { Flame, Orbit, Map, MessageCircle, User, Ghost, Shield, LogOut, Home, Crown, ChevronRight, Heart, Radio } from 'lucide-react'
+import { Flame, Orbit, Map, MessageCircle, User, Ghost, Shield, LogOut, Home, Crown, ChevronRight, Heart, Radio, EyeOff } from 'lucide-react'
 import { usePathname } from 'next/navigation'
 import { useAppStore } from '@/lib/store/useAppStore'
+import { useGhostMode } from '@/lib/hooks/useGhostMode'
 import { useSignOut } from '@/lib/hooks/useAuth'
 import { useAuthUser } from '@/lib/hooks/useAuth'
 import { useLikes } from '@/lib/hooks/useDiscover'
@@ -27,7 +28,7 @@ interface AppSidebarProps {
 
 export default function AppSidebar({ unreadCount }: AppSidebarProps) {
     const pathname = usePathname()
-    const { isGhostMode, toggleGhostMode } = useAppStore()
+    const { isGhostMode, requestToggle: requestGhostToggle } = useGhostMode()
     const signOut = useSignOut()
     const { data: likes = [] } = useLikes()
     const likesCount = likes.length
@@ -48,7 +49,7 @@ export default function AppSidebar({ unreadCount }: AppSidebarProps) {
 
             <div className="px-3 py-3 border-b border-tryst-border/80 space-y-2">
                 <button
-                    onClick={toggleGhostMode}
+                    onClick={requestGhostToggle}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
                         isGhostMode
                             ? 'bg-gold/10 border border-gold/30 text-gold-400'
@@ -91,6 +92,13 @@ export default function AppSidebar({ unreadCount }: AppSidebarProps) {
                         </Link>
                     )
                 })}
+                <Link href="/hide"
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                        pathname === '/hide' ? 'nav-item-active' : 'text-ivory-500 hover:text-ivory-200 hover:bg-tryst-card/60'
+                    }`}>
+                    <EyeOff className="w-5 h-5 text-crimson-300" />
+                    <span>Hide from</span>
+                </Link>
                 <Link href="/gold"
                     className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
                         pathname === '/gold' ? 'nav-item-active' : 'text-ivory-500 hover:text-ivory-200 hover:bg-tryst-card/60'
@@ -101,10 +109,15 @@ export default function AppSidebar({ unreadCount }: AppSidebarProps) {
             </nav>
 
             <div className="p-3 border-t border-tryst-border/80 space-y-1">
-                <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-ivory-500 hover:text-ivory-200 hover:bg-tryst-card/60 text-sm transition-all">
+                <Link href="/hide"
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all ${
+                        pathname === '/hide'
+                            ? 'nav-item-active'
+                            : 'text-ivory-500 hover:text-ivory-200 hover:bg-tryst-card/60'
+                    }`}>
                     <Shield className="w-4 h-4" />
-                    <span>Safety Center</span>
-                </button>
+                    <span>Safety · Hide from</span>
+                </Link>
                 <button onClick={signOut}
                     className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-ivory-600 hover:text-ivory-400 hover:bg-tryst-card/60 text-sm transition-all">
                     <LogOut className="w-4 h-4" />

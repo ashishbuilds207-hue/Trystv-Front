@@ -129,6 +129,8 @@ export function toSnakeProfilePatch(data: Record<string, unknown>) {
         maxDistanceKm: 'max_distance_km',
         latitude: 'latitude',
         longitude: 'longitude',
+        phone: 'phone',
+        email: 'email',
         heightCm: 'height_cm',
         build: 'build',
         orientation: 'orientation',
